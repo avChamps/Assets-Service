@@ -6,17 +6,39 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const nm = require('nodemailer');
 
-const GMAIL_USERNAME = 'hello@avchamps.com';
-const GMAIL_PASSWORD = 'Bl@ckh0r5e@2028!';
+function getJwtSecret() {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured');
+  }
+
+  return process.env.JWT_SECRET;
+}
+
+function getEmailConfig() {
+  const config = {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: process.env.SMTP_SECURE !== 'false',
+    user: process.env.SMTP_USER,
+    password: process.env.SMTP_PASSWORD
+  };
+
+  if (!config.host || !config.user || !config.password) {
+    throw new Error('Email configuration missing. Set SMTP_HOST, SMTP_USER and SMTP_PASSWORD.');
+  }
+
+  return config;
+}
 
 async function sendForgotMail(email, otp) {
+  const emailConfig = getEmailConfig();
   const transporter = nm.createTransport({
-    host: 'smtpout.secureserver.net',
-    port: 465,
-    secure: true,
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
     auth: {
-      user: GMAIL_USERNAME,
-      pass: GMAIL_PASSWORD
+      user: emailConfig.user,
+      pass: emailConfig.password
     }
   });
 
@@ -130,7 +152,7 @@ async function sendForgotMail(email, otp) {
   `;
 
   const mailOptions = {
-    from: GMAIL_USERNAME,
+    from: emailConfig.user,
     to: email,
     subject: 'Here is your One-Time Password (OTP)',
     html: htmlContent
@@ -214,7 +236,7 @@ router.post('/create-user', async (req, res) => {
         role: 'admin',
         companyName: companyName || null
       },
-      process.env.JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
     );
 
@@ -252,7 +274,7 @@ router.post('/login-generate-otp', async (req, res) => {
     }
 
     const sql = `
-      SELECT userId, fullName, workEmail, password, companyName
+      SELECT userId, fullName, workEmail, password, companyName, jobTitle
       FROM Users
       WHERE workEmail = ?
       LIMIT 1
@@ -276,24 +298,20 @@ router.post('/login-generate-otp', async (req, res) => {
       });
     }
 
-    if (!GMAIL_USERNAME || !GMAIL_PASSWORD) {
-      return res.status(500).json({
-        success: false,
-        message: 'Email configuration missing. Set GMAIL_USERNAME and GMAIL_PASSWORD.'
-      });
-    }
-
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     await sendForgotMail(user.workEmail, otp);
 
     const otpToken = jwt.sign(
       {
         userId: user.userId,
+        fullName: user.fullName,
         workEmail: user.workEmail,
+        companyName: user.companyName || null,
+        jobTitle: user.jobTitle || null,
         otp,
         purpose: 'login_otp'
       },
-      process.env.JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: '2m' }
     );
 
@@ -305,7 +323,8 @@ router.post('/login-generate-otp', async (req, res) => {
         userId: user.userId,
         fullName: user.fullName,
         workEmail: user.workEmail,
-        companyName: user.companyName || null
+        companyName: user.companyName || null,
+        jobTitle: user.jobTitle
       }
     });
   } catch (error) {
@@ -331,7 +350,7 @@ router.post('/verify-login-otp', async (req, res) => {
 
     let decoded;
     try {
-      decoded = jwt.verify(otpToken, process.env.JWT_SECRET);
+      decoded = jwt.verify(otpToken, getJwtSecret());
     } catch (error) {
       return res.status(401).json({
         success: false,
@@ -352,19 +371,204 @@ router.post('/verify-login-otp', async (req, res) => {
         workEmail: decoded.workEmail,
         role: 'admin'
       },
-      process.env.JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
     );
 
     return res.status(200).json({
       success: true,
       message: 'Login verified successfully',
-      token: authToken
+      token: authToken,
+      data: {
+        userId: decoded.userId,
+        fullName: decoded.fullName,
+        workEmail: decoded.workEmail,
+        companyName: decoded.companyName,
+        jobTitle: decoded.jobTitle
+      }
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: 'Server error while verifying OTP',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/users/forgot-password-generate-otp
+router.post('/forgot-password-generate-otp', async (req, res) => {
+  try {
+    const { workEmail } = req.body;
+
+    if (!workEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'workEmail is required'
+      });
+    }
+
+    const sql = `
+      SELECT userId, fullName, workEmail
+      FROM Users
+      WHERE workEmail = ?
+      LIMIT 1
+    `;
+    const [rows] = await pool.promise().query(sql, [workEmail]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found with this email'
+      });
+    }
+
+    const user = rows[0];
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    await sendForgotMail(user.workEmail, otp);
+
+    const otpToken = jwt.sign(
+      {
+        userId: user.userId,
+        workEmail: user.workEmail,
+        otp,
+        purpose: 'forgot_password_otp'
+      },
+      getJwtSecret(),
+      { expiresIn: '2m' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP sent to your email',
+      otpToken
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while generating forgot password OTP',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/users/verify-forgot-password-otp
+router.post('/verify-forgot-password-otp', async (req, res) => {
+  try {
+    const { otpToken, otp } = req.body;
+
+    if (!otpToken || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'otpToken and otp are required'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(otpToken, getJwtSecret());
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired OTP token'
+      });
+    }
+
+    if (decoded.purpose !== 'forgot_password_otp' || String(decoded.otp) !== String(otp)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid OTP'
+      });
+    }
+
+    const resetToken = jwt.sign(
+      {
+        userId: decoded.userId,
+        workEmail: decoded.workEmail,
+        purpose: 'password_reset'
+      },
+      getJwtSecret(),
+      { expiresIn: '10m' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully',
+      resetToken
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while verifying forgot password OTP',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/users/reset-password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { resetToken, newPassword, confirmPassword } = req.body;
+
+    if (!resetToken || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'resetToken, newPassword and confirmPassword are required'
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Passwords do not match'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, getJwtSecret());
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired reset token'
+      });
+    }
+
+    if (decoded.purpose !== 'password_reset') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid reset token'
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const updateSql = `
+      UPDATE Users
+      SET password = ?, updatedBy = ?
+      WHERE userId = ? AND workEmail = ?
+    `;
+    const [result] = await pool.promise().query(updateSql, [
+      hashedPassword,
+      decoded.userId,
+      decoded.userId,
+      decoded.workEmail
+    ]);
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password reset successfully'
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server error while resetting password',
       error: error.message
     });
   }

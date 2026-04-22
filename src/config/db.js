@@ -1,10 +1,10 @@
 const mysql = require('mysql2');
 
 const dbConfig = {
-   host: '194.238.17.75',
-  user: 'disendra',
-  password: 'Bl@ckh0r5e@2025!',
-  database: 'AssetManagement',
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   dateStrings: ['DATE'],    // Return DATE columns as pure strings
   timezone: 'local'         // Prevent UTC conversion
 };

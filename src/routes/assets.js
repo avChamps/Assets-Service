@@ -8,6 +8,7 @@ const router = express.Router();
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
+const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 
 const ASSET_COLUMNS = [
   'id',
@@ -114,6 +115,16 @@ const LIST_FILTER_COLUMNS = [
   'make',
   'assetType'
 ];
+const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
+const FILE_IMPORT_COLUMNS = INSERT_COLUMNS.filter((column) => !FILE_IGNORED_COLUMNS.has(column));
+const CSV_HEADER_MAP = new Map(
+  INSERT_COLUMNS.map((column) => [column.toLowerCase(), column])
+);
+
+for (const column of INSERT_COLUMNS) {
+  CSV_HEADER_MAP.set(column.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`).toLowerCase(), column);
+  CSV_HEADER_MAP.set(column.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`).toLowerCase(), column);
+}
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -164,7 +175,7 @@ function isMissing(value) {
 }
 
 function normalizeAssetValue(field, value) {
-  if (NULLABLE_FIELDS.has(field) && value === '') {
+  if (NULLABLE_FIELDS.has(field) && isMissing(value)) {
     return null;
   }
 
@@ -203,6 +214,216 @@ function validateRequiredUpdateFields(asset) {
   }
 
   return null;
+}
+
+function getContentType(req) {
+  return req.headers['content-type'] || '';
+}
+
+function readRequestBody(req, limitBytes = MAX_IMPORT_FILE_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+
+    req.on('data', (chunk) => {
+      totalBytes += chunk.length;
+
+      if (totalBytes > limitBytes) {
+        reject(new Error(`File size must be ${Math.floor(limitBytes / (1024 * 1024))}MB or less`));
+        req.destroy();
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function getMultipartBoundary(contentType) {
+  const match = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  return match ? match[1] || match[2] : null;
+}
+
+function parseMultipartCsvFile(bodyBuffer, contentType) {
+  const boundary = getMultipartBoundary(contentType);
+
+  if (!boundary) {
+    throw new Error('Multipart boundary is missing');
+  }
+
+  const body = bodyBuffer.toString('utf8');
+  const parts = body.split(`--${boundary}`);
+
+  for (const rawPart of parts) {
+    const part = rawPart.replace(/^\r?\n/, '');
+
+    if (!part || part === '--' || part.startsWith('--')) {
+      continue;
+    }
+
+    const separator = part.includes('\r\n\r\n') ? '\r\n\r\n' : '\n\n';
+    const separatorIndex = part.indexOf(separator);
+
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const rawHeaders = part.slice(0, separatorIndex);
+    const fileContent = part
+      .slice(separatorIndex + separator.length)
+      .replace(/\r?\n--$/, '')
+      .replace(/\r?\n$/, '');
+    const isFilePart = /filename=/i.test(rawHeaders) || /name="file"/i.test(rawHeaders);
+
+    if (isFilePart) {
+      return fileContent;
+    }
+  }
+
+  throw new Error('CSV file is required in form field "file"');
+}
+
+function getCsvTextFromRequest(req, bodyBuffer) {
+  const contentType = getContentType(req);
+
+  if (contentType.includes('multipart/form-data')) {
+    return parseMultipartCsvFile(bodyBuffer, contentType);
+  }
+
+  if (
+    contentType.includes('text/csv') ||
+    contentType.includes('application/csv') ||
+    contentType.includes('application/vnd.ms-excel')
+  ) {
+    return bodyBuffer.toString('utf8');
+  }
+
+  throw new Error('Upload a CSV file using multipart/form-data field "file" or text/csv');
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const nextChar = text[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      row.push(field);
+      field = '';
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        index += 1;
+      }
+
+      row.push(field);
+      if (row.some((value) => !isMissing(value))) {
+        rows.push(row);
+      }
+
+      row = [];
+      field = '';
+      continue;
+    }
+
+    field += char;
+  }
+
+  if (inQuotes) {
+    throw new Error('Invalid CSV: quoted field is not closed');
+  }
+
+  row.push(field);
+  if (row.some((value) => !isMissing(value))) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeCsvHeader(header) {
+  return header.replace(/^\uFEFF/, '').trim().toLowerCase();
+}
+
+function parseAssetsCsv(csvText) {
+  const rows = parseCsv(csvText);
+
+  if (!rows.length) {
+    return {
+      records: [],
+      logs: [{ type: 'error', message: 'CSV file is empty' }],
+      totalRows: 0
+    };
+  }
+
+  const headers = rows[0].map((header) => CSV_HEADER_MAP.get(normalizeCsvHeader(header)) || null);
+  const logs = [];
+  const records = [];
+  const totalRows = rows.length - 1;
+
+  rows.slice(1).forEach((row, index) => {
+    const record = {};
+    const rowNumber = index + 2;
+
+    headers.forEach((header, columnIndex) => {
+      if (!header || FILE_IGNORED_COLUMNS.has(header)) {
+        return;
+      }
+
+      if (FILE_IMPORT_COLUMNS.includes(header)) {
+        record[header] = typeof row[columnIndex] === 'string' ? row[columnIndex].trim() : row[columnIndex];
+      }
+    });
+
+    if (Object.keys(record).length) {
+      records.push({ rowNumber, record });
+    } else {
+      logs.push({
+        row: rowNumber,
+        type: 'error',
+        message: 'No valid asset columns found'
+      });
+    }
+  });
+
+  return { records, logs, totalRows };
+}
+
+function buildInsertSql() {
+  const placeholders = INSERT_COLUMNS.map(() => '?').join(', ');
+  return `
+    INSERT INTO assets (${INSERT_COLUMNS.join(', ')})
+    VALUES (${placeholders})
+  `;
+}
+
+function validateAssetForInsert(asset) {
+  const missingFields = getMissingRequiredFields(asset);
+
+  if (missingFields.length) {
+    return `Required fields missing: ${missingFields.join(', ')}`;
+  }
+
+  return validateNumericFields(asset) || validateRequiredUpdateFields(asset);
 }
 
 function buildListFilters(query, tenantId) {
@@ -319,6 +540,91 @@ router.get('/list', async (req, res) => {
     });
   } catch (error) {
     return sendDatabaseError(res, error, 'fetching');
+  }
+});
+
+// POST /api/assets/upload
+router.post('/upload', async (req, res) => {
+  try {
+    const bodyBuffer = await readRequestBody(req);
+    const csvText = getCsvTextFromRequest(req, bodyBuffer);
+    const { records, logs, totalRows } = parseAssetsCsv(csvText);
+
+    if (!records.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid asset records found in CSV file',
+        summary: {
+          totalRows,
+          insertedRows: 0,
+          failedRows: logs.length
+        },
+        logs
+      });
+    }
+
+    const insertSql = buildInsertSql();
+    const insertedIds = [];
+    let failedRows = logs.length;
+
+    for (const { rowNumber, record } of records) {
+      const asset = buildInsertAsset({
+        ...record,
+        tenantId: req.user.tenantId,
+        createdBy: req.user.userId,
+        updatedBy: req.user.userId
+      });
+      const validationError = validateAssetForInsert(asset);
+
+      if (validationError) {
+        failedRows += 1;
+        logs.push({
+          row: rowNumber,
+          type: 'error',
+          message: validationError
+        });
+        continue;
+      }
+
+      try {
+        await pool.promise().query(
+          insertSql,
+          INSERT_COLUMNS.map((field) => asset[field])
+        );
+        insertedIds.push(asset.id);
+      } catch (error) {
+        failedRows += 1;
+        logs.push({
+          row: rowNumber,
+          type: 'error',
+          message: error.code === 'ER_DUP_ENTRY'
+            ? 'Asset already exists with this serialNo'
+            : error.message
+        });
+      }
+    }
+
+    const insertedRows = insertedIds.length;
+
+    return res.status(200).json({
+      success: failedRows === 0,
+      message: failedRows
+        ? 'Asset file processed with errors'
+        : 'Asset file imported successfully',
+      summary: {
+        totalRows,
+        insertedRows,
+        failedRows
+      },
+      insertedIds,
+      logs
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: 'Unable to process asset CSV file',
+      error: error.message
+    });
   }
 });
 

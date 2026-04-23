@@ -106,6 +106,14 @@ const NULLABLE_FIELDS = new Set([
 
 const INTEGER_FIELDS = new Set(['floorNumber', 'pax', 'quantity']);
 const DECIMAL_FIELDS = new Set(['unitPrice']);
+const LIST_FILTER_COLUMNS = [
+  'country',
+  'location',
+  'building',
+  'roomName',
+  'make',
+  'assetType'
+];
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -197,6 +205,25 @@ function validateRequiredUpdateFields(asset) {
   return null;
 }
 
+function buildListFilters(query, tenantId) {
+  const conditions = ['tenantId = ?'];
+  const params = [tenantId];
+
+  for (const column of LIST_FILTER_COLUMNS) {
+    const value = query[column];
+
+    if (!isMissing(value)) {
+      conditions.push(`${column} = ?`);
+      params.push(typeof value === 'string' ? value.trim() : value);
+    }
+  }
+
+  return {
+    whereSql: `WHERE ${conditions.join(' AND ')}`,
+    params
+  };
+}
+
 function buildInsertAsset(body) {
   const asset = {
     id: uuidv4(),
@@ -252,7 +279,7 @@ function sendDatabaseError(res, error, action) {
 
 router.use(authenticateToken);
 
-// GET /api/assets/list?page=1&limit=10
+// GET /api/assets/list?page=1&limit=10&country=India&location=HQ%20-%20Floor%208&building=Kapil%20Towers&roomName=Ganga&make=Test%20Make&assetType=Cables
 router.get('/list', async (req, res) => {
   try {
     const page = parsePositiveInteger(req.query.page, DEFAULT_PAGE);
@@ -260,8 +287,7 @@ router.get('/list', async (req, res) => {
     const limit = Math.min(requestedLimit, MAX_LIMIT);
     const offset = (page - 1) * limit;
     const { tenantId } = req.user;
-    const whereSql = 'WHERE tenantId = ?';
-    const params = [tenantId];
+    const { whereSql, params } = buildListFilters(req.query, tenantId);
 
     const countSql = `SELECT COUNT(*) AS total FROM assets ${whereSql}`;
     const [countRows] = await pool.promise().query(countSql, params);

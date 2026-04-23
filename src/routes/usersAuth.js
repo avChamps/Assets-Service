@@ -163,6 +163,10 @@ async function sendForgotMail(email, otp) {
 
 // POST /api/users/create-user
 router.post('/create-user', async (req, res) => {
+  const db = pool.promise();
+  let connection;
+  let transactionStarted = false;
+
   try {
     const {
       fullName,
@@ -178,7 +182,7 @@ router.post('/create-user', async (req, res) => {
       confirmPassword
     } = req.body;
 
-    if (!fullName || !workEmail || !password || !confirmPassword) {
+    if (!fullName || !workEmail || !companyName || !password || !confirmPassword) {
       return res.status(400).json({
         success: false,
         message: 'Required fields missing'
@@ -192,8 +196,8 @@ router.post('/create-user', async (req, res) => {
       });
     }
 
-    const checkSql = 'SELECT userId FROM Users WHERE workEmail = ? LIMIT 1';
-    const [rows] = await pool.promise().query(checkSql, [workEmail]);
+    const checkSql = 'SELECT userId FROM users WHERE workEmail = ? LIMIT 1';
+    const [rows] = await db.query(checkSql, [workEmail]);
 
     if (rows.length > 0) {
       return res.status(409).json({
@@ -202,39 +206,61 @@ router.post('/create-user', async (req, res) => {
       });
     }
 
+    const tenantId = uuidv4();
     const userId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const insertSql = `
-      INSERT INTO Users (
-        userId, fullName, workEmail, phoneNumber, jobTitle,
-        companyName, companyDomain, companySize, expectedAssets,
-        subscriptionType, password, insertedBy, updatedBy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const insertTenantSql = `
+      INSERT INTO tenants (
+        tenantId, companyName, companyDomain, companySize, expectedAssets,
+        subscriptionType
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `;
 
-    await pool.promise().query(insertSql, [
+    await connection.query(insertTenantSql, [
+      tenantId,
+      companyName,
+      companyDomain || null,
+      companySize || null,
+      expectedAssets || null,
+      subscriptionType || null
+    ]);
+
+    const insertUserSql = `
+      INSERT INTO users (
+        userId, tenantId, fullName, workEmail, phoneNumber, jobTitle,
+        password, role, status, insertedBy, updatedBy
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    await connection.query(insertUserSql, [
       userId,
+      tenantId,
       fullName,
       workEmail,
       phoneNumber || null,
       jobTitle || null,
-      companyName || null,
-      companyDomain || null,
-      companySize || null,
-      expectedAssets || null,
-      subscriptionType || null,
       hashedPassword,
+      'admin',
+      'active',
       userId,
       userId
     ]);
 
+    await connection.commit();
+    transactionStarted = false;
+
     const token = jwt.sign(
       {
         userId,
+        tenantId,
         workEmail,
         role: 'admin',
-        companyName: companyName || null
+        companyName
       },
       getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
@@ -246,6 +272,7 @@ router.post('/create-user', async (req, res) => {
       token,
       data: {
         userId,
+        tenantId,
         fullName,
         workEmail,
         companyName,
@@ -253,11 +280,26 @@ router.post('/create-user', async (req, res) => {
       }
     });
   } catch (error) {
+    if (connection && transactionStarted) {
+      await connection.rollback();
+    }
+
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Server error',
       error: error.message
     });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 });
 
@@ -274,9 +316,23 @@ router.post('/login-generate-otp', async (req, res) => {
     }
 
     const sql = `
-      SELECT userId, fullName, workEmail, password, companyName, jobTitle
-      FROM Users
-      WHERE workEmail = ?
+      SELECT
+        u.userId,
+        u.tenantId,
+        u.fullName,
+        u.workEmail,
+        u.password,
+        u.role,
+        u.status,
+        u.jobTitle,
+        t.companyName,
+        t.companyDomain,
+        t.companySize,
+        t.expectedAssets,
+        t.subscriptionType
+      FROM users u
+      INNER JOIN tenants t ON t.tenantId = u.tenantId
+      WHERE u.workEmail = ?
       LIMIT 1
     `;
     const [rows] = await pool.promise().query(sql, [workEmail]);
@@ -289,6 +345,14 @@ router.post('/login-generate-otp', async (req, res) => {
     }
 
     const user = rows[0];
+
+    if (user.status && user.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        message: 'User account is not active'
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
@@ -304,9 +368,15 @@ router.post('/login-generate-otp', async (req, res) => {
     const otpToken = jwt.sign(
       {
         userId: user.userId,
+        tenantId: user.tenantId,
         fullName: user.fullName,
         workEmail: user.workEmail,
+        role: user.role,
         companyName: user.companyName || null,
+        companyDomain: user.companyDomain || null,
+        companySize: user.companySize || null,
+        expectedAssets: user.expectedAssets || null,
+        subscriptionType: user.subscriptionType || null,
         jobTitle: user.jobTitle || null,
         otp,
         purpose: 'login_otp'
@@ -321,9 +391,15 @@ router.post('/login-generate-otp', async (req, res) => {
       otpToken,
       data: {
         userId: user.userId,
+        tenantId: user.tenantId,
         fullName: user.fullName,
         workEmail: user.workEmail,
+        role: user.role,
         companyName: user.companyName || null,
+        companyDomain: user.companyDomain || null,
+        companySize: user.companySize || null,
+        expectedAssets: user.expectedAssets || null,
+        subscriptionType: user.subscriptionType || null,
         jobTitle: user.jobTitle
       }
     });
@@ -368,8 +444,9 @@ router.post('/verify-login-otp', async (req, res) => {
     const authToken = jwt.sign(
       {
         userId: decoded.userId,
+        tenantId: decoded.tenantId,
         workEmail: decoded.workEmail,
-        role: 'admin'
+        role: decoded.role
       },
       getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
@@ -381,9 +458,15 @@ router.post('/verify-login-otp', async (req, res) => {
       token: authToken,
       data: {
         userId: decoded.userId,
+        tenantId: decoded.tenantId,
         fullName: decoded.fullName,
         workEmail: decoded.workEmail,
+        role: decoded.role,
         companyName: decoded.companyName,
+        companyDomain: decoded.companyDomain,
+        companySize: decoded.companySize,
+        expectedAssets: decoded.expectedAssets,
+        subscriptionType: decoded.subscriptionType,
         jobTitle: decoded.jobTitle
       }
     });
@@ -410,7 +493,7 @@ router.post('/forgot-password-generate-otp', async (req, res) => {
 
     const sql = `
       SELECT userId, fullName, workEmail
-      FROM Users
+      FROM users
       WHERE workEmail = ?
       LIMIT 1
     `;
@@ -543,7 +626,7 @@ router.post('/reset-password', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const updateSql = `
-      UPDATE Users
+      UPDATE users
       SET password = ?, updatedBy = ?
       WHERE userId = ? AND workEmail = ?
     `;

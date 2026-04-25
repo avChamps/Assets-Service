@@ -3,7 +3,7 @@ const pool = require('../config/db');
 
 const router = express.Router();
 
-const ALLOWED_OPERATIONS = new Set(['CREATE','SELECT', 'INSERT', 'UPDATE', 'DELETE','DROP']);
+const ALLOWED_OPERATIONS = new Set(['CREATE','ALTER','SELECT', 'TRUNCATE','INSERT', 'UPDATE', 'DELETE','DROP']);
 
 function normalizeSql(sql) {
   return sql.trim().replace(/;+\s*$/, '');

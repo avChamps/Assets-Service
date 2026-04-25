@@ -9,10 +9,13 @@ const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+const ASSET_TAG_PREFIX = 'AVC';
+const ASSET_TAG_NUMBER_START = ASSET_TAG_PREFIX.length + 2;
 
 const ASSET_COLUMNS = [
   'id',
   'tenantId',
+  'assetTag',
   'country',
   'location',
   'building',
@@ -42,6 +45,7 @@ const ASSET_COLUMNS = [
 const INSERT_COLUMNS = [
   'id',
   'tenantId',
+  'assetTag',
   'country',
   'location',
   'building',
@@ -66,7 +70,7 @@ const INSERT_COLUMNS = [
   'updatedBy'
 ];
 
-const UPDATE_COLUMNS = INSERT_COLUMNS.filter((column) => !['id', 'tenantId', 'createdBy'].includes(column));
+const UPDATE_COLUMNS = INSERT_COLUMNS.filter((column) => !['id', 'tenantId', 'assetTag', 'createdBy'].includes(column));
 const REQUIRED_CREATE_FIELDS = [
   'country',
   'location',
@@ -115,7 +119,7 @@ const LIST_FILTER_COLUMNS = [
   'make',
   'assetType'
 ];
-const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
+const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'assetTag', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
 const FILE_IMPORT_COLUMNS = INSERT_COLUMNS.filter((column) => !FILE_IGNORED_COLUMNS.has(column));
 const CSV_HEADER_MAP = new Map(
   INSERT_COLUMNS.map((column) => [column.toLowerCase(), column])
@@ -408,12 +412,53 @@ function parseAssetsCsv(csvText) {
   return { records, logs, totalRows };
 }
 
+function escapeCsvValue(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  const text = value instanceof Date ? value.toISOString() : String(value);
+
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  return text;
+}
+
+function buildAssetsCsv(assets) {
+  const header = ASSET_COLUMNS.join(',');
+  const rows = assets.map((asset) => (
+    ASSET_COLUMNS.map((column) => escapeCsvValue(asset[column])).join(',')
+  ));
+
+  return [header, ...rows].join('\n');
+}
+
 function buildInsertSql() {
   const placeholders = INSERT_COLUMNS.map(() => '?').join(', ');
   return `
     INSERT INTO assets (${INSERT_COLUMNS.join(', ')})
     VALUES (${placeholders})
   `;
+}
+
+function formatAssetTag(sequence) {
+  return `${ASSET_TAG_PREFIX}-${sequence}`;
+}
+
+async function getNextAssetTagSequence(db, tenantId) {
+  const [rows] = await db.query(
+    `
+      SELECT COALESCE(MAX(CAST(SUBSTRING(assetTag, ?) AS UNSIGNED)), 0) + 1 AS nextSequence
+      FROM assets
+      WHERE tenantId = ?
+        AND assetTag REGEXP ?
+    `,
+    [ASSET_TAG_NUMBER_START, tenantId, `^${ASSET_TAG_PREFIX}-[0-9]+$`]
+  );
+
+  return Number(rows[0]?.nextSequence || 1);
 }
 
 function validateAssetForInsert(asset) {
@@ -480,7 +525,7 @@ function sendDatabaseError(res, error, action) {
   if (error.code === 'ER_DUP_ENTRY') {
     return res.status(409).json({
       success: false,
-      message: 'Asset already exists with this serialNo'
+      message: 'Asset already exists with this serialNo or assetTag'
     });
   }
 
@@ -510,9 +555,20 @@ router.get('/list', async (req, res) => {
     const { tenantId } = req.user;
     const { whereSql, params } = buildListFilters(req.query, tenantId);
 
+    const db = pool.promise();
     const countSql = `SELECT COUNT(*) AS total FROM assets ${whereSql}`;
-    const [countRows] = await pool.promise().query(countSql, params);
+    const totalAssetsValueSql = `
+      SELECT COALESCE(SUM(COALESCE(quantity, 0) * COALESCE(unitPrice, 0)), 0) AS totalAssetsValue
+      FROM assets
+      WHERE tenantId = ?
+    `;
+
+    const [[countRows], [totalAssetsValueRows]] = await Promise.all([
+      db.query(countSql, params),
+      db.query(totalAssetsValueSql, [tenantId])
+    ]);
     const totalRecords = countRows[0]?.total || 0;
+    const totalAssetsValue = Number(totalAssetsValueRows[0]?.totalAssetsValue || 0);
     const totalPages = Math.ceil(totalRecords / limit);
 
     const listSql = `
@@ -523,12 +579,13 @@ router.get('/list', async (req, res) => {
       LIMIT ? OFFSET ?
     `;
 
-    const [assets] = await pool.promise().query(listSql, [...params, limit, offset]);
+    const [assets] = await db.query(listSql, [...params, limit, offset]);
 
     return res.status(200).json({
       success: true,
       message: 'Assets fetched successfully',
       data: assets,
+      totalAssetsValue,
       pagination: {
         page,
         limit,
@@ -565,12 +622,15 @@ router.post('/upload', async (req, res) => {
 
     const insertSql = buildInsertSql();
     const insertedIds = [];
+    const db = pool.promise();
+    let nextAssetTagSequence = await getNextAssetTagSequence(db, req.user.tenantId);
     let failedRows = logs.length;
 
     for (const { rowNumber, record } of records) {
       const asset = buildInsertAsset({
         ...record,
         tenantId: req.user.tenantId,
+        assetTag: formatAssetTag(nextAssetTagSequence),
         createdBy: req.user.userId,
         updatedBy: req.user.userId
       });
@@ -587,18 +647,19 @@ router.post('/upload', async (req, res) => {
       }
 
       try {
-        await pool.promise().query(
+        await db.query(
           insertSql,
           INSERT_COLUMNS.map((field) => asset[field])
         );
         insertedIds.push(asset.id);
+        nextAssetTagSequence += 1;
       } catch (error) {
         failedRows += 1;
         logs.push({
           row: rowNumber,
           type: 'error',
           message: error.code === 'ER_DUP_ENTRY'
-            ? 'Asset already exists with this serialNo'
+            ? 'Asset already exists with this serialNo or assetTag'
             : error.message
         });
       }
@@ -625,6 +686,29 @@ router.post('/upload', async (req, res) => {
       message: 'Unable to process asset CSV file',
       error: error.message
     });
+  }
+});
+
+// GET /api/assets/export/csv
+router.get('/export/csv', async (req, res) => {
+  try {
+    const [assets] = await pool.promise().query(
+      `
+        SELECT ${ASSET_COLUMNS.join(', ')}
+        FROM assets
+        WHERE tenantId = ?
+        ORDER BY createdAt DESC
+      `,
+      [req.user.tenantId]
+    );
+    const csv = buildAssetsCsv(assets);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="assets.csv"');
+
+    return res.status(200).send(csv);
+  } catch (error) {
+    return sendDatabaseError(res, error, 'exporting');
   }
 });
 
@@ -656,9 +740,12 @@ router.get('/:id', async (req, res) => {
 // POST /api/assets/create
 router.post('/create', async (req, res) => {
   try {
+    const db = pool.promise();
+    const assetTag = formatAssetTag(await getNextAssetTagSequence(db, req.user.tenantId));
     const asset = buildInsertAsset({
       ...req.body,
       tenantId: req.user.tenantId,
+      assetTag,
       createdBy: req.user.userId,
       updatedBy: req.user.userId
     });
@@ -694,12 +781,12 @@ router.post('/create', async (req, res) => {
       VALUES (${placeholders})
     `;
 
-    await pool.promise().query(
+    await db.query(
       insertSql,
       INSERT_COLUMNS.map((field) => asset[field])
     );
 
-    const [rows] = await pool.promise().query(
+    const [rows] = await db.query(
       `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? LIMIT 1`,
       [asset.id, req.user.tenantId]
     );

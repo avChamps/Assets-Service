@@ -10,6 +10,7 @@ const countryRoutes = require('./routes/country');
 const assetsRoutes = require('./routes/assets');
 const retiredInverotyRoutes = require('./routes/retiredInveroty');
 const ticktsRoutes = require('./routes/tickts');
+const analyticsRoutes = require('./routes/analytics');
 const cors = require('cors');
 
 const app = express();
@@ -37,6 +38,7 @@ app.use('/api/country', countryRoutes);
 app.use('/api/assets', assetsRoutes);
 app.use('/api/retired-inventory', retiredInverotyRoutes);
 app.use('/api/tickets', ticktsRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

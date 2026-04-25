@@ -20,9 +20,23 @@ const TICKET_COLUMNS = [
   'assetId',
   'subject',
   'status',
+  'createdBy',
   'updatedBy',
   'createdAt',
   'updatedAt'
+];
+
+const TICKET_USER_NAME_COLUMNS = [
+  {
+    header: 'createdByName',
+    alias: 'ticket_createdByName',
+    expression: 'createdUser.fullName'
+  },
+  {
+    header: 'updatedByName',
+    alias: 'ticket_updatedByName',
+    expression: 'updatedUser.fullName'
+  }
 ];
 
 const ASSET_COLUMNS = [
@@ -61,6 +75,10 @@ const TICKET_CSV_COLUMNS = [
     header: column,
     prefix: 'ticket_',
     column
+  })),
+  ...TICKET_USER_NAME_COLUMNS.map((column) => ({
+    header: column.header,
+    alias: column.alias
   })),
   ...ASSET_COLUMNS.map((column) => ({
     header: `asset_${column}`,
@@ -146,6 +164,23 @@ function buildAliasedColumns(tableAlias, columns, prefix) {
   return columns.map((column) => `${tableAlias}.${column} AS ${prefix}${column}`).join(', ');
 }
 
+function buildTicketUserNameColumns() {
+  return TICKET_USER_NAME_COLUMNS
+    .map((column) => `${column.expression} AS ${column.alias}`)
+    .join(', ');
+}
+
+function buildTicketUserNameJoins() {
+  return `
+      LEFT JOIN users createdUser
+        ON createdUser.userId = t.createdBy
+       AND createdUser.tenantId = t.tenantId
+      LEFT JOIN users updatedUser
+        ON updatedUser.userId = t.updatedBy
+       AND updatedUser.tenantId = t.tenantId
+    `;
+}
+
 function pickPrefixedColumns(row, columns, prefix) {
   return columns.reduce((payload, column) => {
     payload[column] = row[`${prefix}${column}`];
@@ -156,6 +191,8 @@ function pickPrefixedColumns(row, columns, prefix) {
 function mapTicketRow(row) {
   return {
     ...pickPrefixedColumns(row, TICKET_COLUMNS, 'ticket_'),
+    createdByName: row.ticket_createdByName || null,
+    updatedByName: row.ticket_updatedByName || null,
     asset: row.asset_id ? pickPrefixedColumns(row, ASSET_COLUMNS, 'asset_') : null
   };
 }
@@ -230,7 +267,7 @@ function buildTicketsCsv(rows) {
   const header = TICKET_CSV_COLUMNS.map(({ header: columnHeader }) => columnHeader).join(',');
   const csvRows = rows.map((row) => (
     TICKET_CSV_COLUMNS
-      .map(({ prefix, column }) => escapeCsvValue(row[`${prefix}${column}`]))
+      .map(({ prefix, column, alias }) => escapeCsvValue(alias ? row[alias] : row[`${prefix}${column}`]))
       .join(',')
   ));
 
@@ -266,7 +303,7 @@ function sendDatabaseError(res, error, action) {
   if (error.code === 'ER_NO_REFERENCED_ROW_2') {
     return res.status(400).json({
       success: false,
-      message: 'Invalid tenantId, assetId, or updatedBy reference'
+      message: 'Invalid tenantId, assetId, createdBy, or updatedBy reference'
     });
   }
 
@@ -318,16 +355,19 @@ router.post('/', async (req, res) => {
     await db.query(
       `
         INSERT INTO tickts (
-          id, tenantId, ticketNumber, assetId, subject, status, updatedBy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          id, tenantId, ticketNumber, assetId, subject, status, createdBy, updatedBy
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [id, req.user.tenantId, ticketNumber, assetId, subject, DEFAULT_TICKET_STATUS, req.user.userId]
+      [id, req.user.tenantId, ticketNumber, assetId, subject, DEFAULT_TICKET_STATUS, req.user.userId, req.user.userId]
     );
 
     const [rows] = await db.query(
-      `SELECT ${TICKET_COLUMNS.join(', ')}
-       FROM tickts
-       WHERE id = ? AND tenantId = ?
+      `SELECT
+         ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
+         ${buildTicketUserNameColumns()}
+       FROM tickts t
+       ${buildTicketUserNameJoins()}
+       WHERE t.id = ? AND t.tenantId = ?
        LIMIT 1`,
       [id, req.user.tenantId]
     );
@@ -335,7 +375,7 @@ router.post('/', async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Ticket created successfully',
-      data: rows[0]
+      data: mapTicketRow(rows[0])
     });
   } catch (error) {
     return sendDatabaseError(res, error, 'creating');
@@ -374,9 +414,11 @@ router.get('/', async (req, res) => {
     const listSql = `
       SELECT
         ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
+        ${buildTicketUserNameColumns()},
         ${buildAliasedColumns('a', ASSET_COLUMNS, 'asset_')}
       FROM tickts t
       LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
+      ${buildTicketUserNameJoins()}
       ${whereSql}
       ORDER BY t.createdAt DESC
       LIMIT ? OFFSET ?
@@ -434,9 +476,11 @@ router.get('/export/csv', async (req, res) => {
     const exportSql = `
       SELECT
         ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
+        ${buildTicketUserNameColumns()},
         ${buildAliasedColumns('a', ASSET_COLUMNS, 'asset_')}
       FROM tickts t
       LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
+      ${buildTicketUserNameJoins()}
       ${whereSql}
       ORDER BY t.createdAt DESC
     `;
@@ -460,9 +504,11 @@ router.get('/:id', async (req, res) => {
       `
         SELECT
           ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
+          ${buildTicketUserNameColumns()},
           ${buildAliasedColumns('a', ASSET_COLUMNS, 'asset_')}
         FROM tickts t
         LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
+        ${buildTicketUserNameJoins()}
         WHERE t.id = ? AND t.tenantId = ?
         LIMIT 1
       `,
@@ -514,9 +560,11 @@ router.get('/asset/:assetId', async (req, res) => {
       `
         SELECT
           ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
+          ${buildTicketUserNameColumns()},
           ${buildAliasedColumns('a', ASSET_COLUMNS, 'asset_')}
         FROM tickts t
         LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
+        ${buildTicketUserNameJoins()}
         WHERE t.assetId = ? AND t.tenantId = ?
         ORDER BY t.createdAt DESC
       `,
@@ -531,6 +579,61 @@ router.get('/asset/:assetId', async (req, res) => {
     });
   } catch (error) {
     return sendDatabaseError(res, error, 'fetching asset ticket history');
+  }
+});
+
+
+// PATCH /api/tickets/:id/status
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const status = normalizeString(req.body.status);
+
+    const validationError = validateTicketStatus(status);
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError
+      });
+    }
+
+    const [result] = await pool.promise().query(
+      `
+      UPDATE tickts
+      SET status = ?, updatedBy = ?
+      WHERE id = ? AND tenantId = ?
+      `,
+      [status, req.user.userId, req.params.id, req.user.tenantId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Ticket not found'
+      });
+    }
+
+    const [rows] = await pool.promise().query(
+      `
+        SELECT
+          ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
+          ${buildTicketUserNameColumns()},
+          ${buildAliasedColumns('a', ASSET_COLUMNS, 'asset_')}
+        FROM tickts t
+        LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
+        ${buildTicketUserNameJoins()}
+        WHERE t.id = ? AND t.tenantId = ?
+        LIMIT 1
+      `,
+      [req.params.id, req.user.tenantId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Ticket status updated successfully',
+      data: mapTicketRow(rows[0])
+    });
+  } catch (error) {
+    return sendDatabaseError(res, error, 'updating');
   }
 });
 

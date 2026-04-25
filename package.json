@@ -5,7 +5,8 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "nodemon src/app.js",
+    "migrate:tickets-created-by": "node scripts/migrate-add-created-by-to-tickts.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

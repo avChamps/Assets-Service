@@ -35,32 +35,56 @@ function validateQuery(sql) {
   return null;
 }
 
-// POST /api/query/execute
+
 router.post('/execute', async (req, res) => {
   try {
     const { query } = req.body;
-    const validationError = validateQuery(query);
 
-    if (validationError) {
+    if (!query) {
       return res.status(400).json({
         success: false,
-        message: validationError
+        message: 'Query is required'
       });
     }
 
-    const sql = normalizeSql(query);
-    const operation = getSqlOperation(sql);
-    const [result] = await pool.promise().query(sql);
+    // Split multiple statements
+    const queries = query
+      .split(';')
+      .map(q => q.trim())
+      .filter(q => q.length > 0);
+
+    const results = [];
+    const db = pool.promise();
+
+    for (const q of queries) {
+      const validationError = validateQuery(q);
+      if (validationError) {
+        return res.status(400).json({
+          success: false,
+          message: validationError
+        });
+      }
+
+      const sql = normalizeSql(q);
+      const operation = getSqlOperation(sql);
+
+      const [result] = await db.query(sql);
+
+      results.push({
+        operation,
+        data: operation === 'SELECT' ? result : undefined,
+        affectedRows: result.affectedRows,
+        insertId: result.insertId,
+        changedRows: result.changedRows
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      message: 'SQL query executed successfully',
-      operation,
-      data: operation === 'SELECT' ? result : undefined,
-      affectedRows: result.affectedRows,
-      insertId: result.insertId,
-      changedRows: result.changedRows
+      message: 'All queries executed successfully',
+      results
     });
+
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -69,5 +93,7 @@ router.post('/execute', async (req, res) => {
     });
   }
 });
+
+
 
 module.exports = router;

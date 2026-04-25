@@ -173,6 +173,7 @@ router.post('/create-user', async (req, res) => {
       workEmail,
       phoneNumber,
       jobTitle,
+      location,
       companyName,
       companyDomain,
       companySize,
@@ -232,9 +233,9 @@ router.post('/create-user', async (req, res) => {
 
     const insertUserSql = `
       INSERT INTO users (
-        userId, tenantId, fullName, workEmail, phoneNumber, jobTitle,
+        userId, tenantId, fullName, workEmail, phoneNumber, jobTitle, location,
         password, role, status, insertedBy, updatedBy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await connection.query(insertUserSql, [
@@ -244,6 +245,7 @@ router.post('/create-user', async (req, res) => {
       workEmail,
       phoneNumber || null,
       jobTitle || null,
+      location || null,
       hashedPassword,
       'admin',
       'active',
@@ -276,7 +278,8 @@ router.post('/create-user', async (req, res) => {
         fullName,
         workEmail,
         companyName,
-        jobTitle
+        jobTitle,
+        location: location || null
       }
     });
   } catch (error) {
@@ -325,6 +328,7 @@ router.post('/login-generate-otp', async (req, res) => {
         u.role,
         u.status,
         u.jobTitle,
+        u.location,
         t.companyName,
         t.companyDomain,
         t.companySize,
@@ -378,6 +382,7 @@ router.post('/login-generate-otp', async (req, res) => {
         expectedAssets: user.expectedAssets || null,
         subscriptionType: user.subscriptionType || null,
         jobTitle: user.jobTitle || null,
+        location: user.location || null,
         otp,
         purpose: 'login_otp'
       },
@@ -400,7 +405,8 @@ router.post('/login-generate-otp', async (req, res) => {
         companySize: user.companySize || null,
         expectedAssets: user.expectedAssets || null,
         subscriptionType: user.subscriptionType || null,
-        jobTitle: user.jobTitle
+        jobTitle: user.jobTitle,
+        location: user.location || null
       }
     });
   } catch (error) {
@@ -467,7 +473,8 @@ router.post('/verify-login-otp', async (req, res) => {
         companySize: decoded.companySize,
         expectedAssets: decoded.expectedAssets,
         subscriptionType: decoded.subscriptionType,
-        jobTitle: decoded.jobTitle
+        jobTitle: decoded.jobTitle,
+        location: decoded.location || null
       }
     });
   } catch (error) {

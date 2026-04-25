@@ -16,6 +16,7 @@ const ASSET_COLUMNS = [
   'id',
   'tenantId',
   'assetTag',
+  'isActive',
   'country',
   'location',
   'building',
@@ -46,6 +47,7 @@ const INSERT_COLUMNS = [
   'id',
   'tenantId',
   'assetTag',
+  'isActive',
   'country',
   'location',
   'building',
@@ -70,7 +72,7 @@ const INSERT_COLUMNS = [
   'updatedBy'
 ];
 
-const UPDATE_COLUMNS = INSERT_COLUMNS.filter((column) => !['id', 'tenantId', 'assetTag', 'createdBy'].includes(column));
+const UPDATE_COLUMNS = INSERT_COLUMNS.filter((column) => !['id', 'tenantId', 'assetTag', 'isActive', 'createdBy'].includes(column));
 const REQUIRED_CREATE_FIELDS = [
   'country',
   'location',
@@ -119,7 +121,7 @@ const LIST_FILTER_COLUMNS = [
   'make',
   'assetType'
 ];
-const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'assetTag', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
+const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'assetTag', 'isActive', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
 const FILE_IMPORT_COLUMNS = INSERT_COLUMNS.filter((column) => !FILE_IGNORED_COLUMNS.has(column));
 const CSV_HEADER_MAP = new Map(
   INSERT_COLUMNS.map((column) => [column.toLowerCase(), column])
@@ -472,7 +474,7 @@ function validateAssetForInsert(asset) {
 }
 
 function buildListFilters(query, tenantId) {
-  const conditions = ['tenantId = ?'];
+  const conditions = ['tenantId = ?', 'isActive = TRUE'];
   const params = [tenantId];
 
   for (const column of LIST_FILTER_COLUMNS) {
@@ -493,6 +495,7 @@ function buildListFilters(query, tenantId) {
 function buildInsertAsset(body) {
   const asset = {
     id: uuidv4(),
+    isActive: true,
     quantity: 1,
     ...body
   };
@@ -560,7 +563,7 @@ router.get('/list', async (req, res) => {
     const totalAssetsValueSql = `
       SELECT COALESCE(SUM(COALESCE(quantity, 0) * COALESCE(unitPrice, 0)), 0) AS totalAssetsValue
       FROM assets
-      WHERE tenantId = ?
+      WHERE tenantId = ? AND isActive = TRUE
     `;
 
     const [[countRows], [totalAssetsValueRows]] = await Promise.all([
@@ -696,7 +699,7 @@ router.get('/export/csv', async (req, res) => {
       `
         SELECT ${ASSET_COLUMNS.join(', ')}
         FROM assets
-        WHERE tenantId = ?
+        WHERE tenantId = ? AND isActive = TRUE
         ORDER BY createdAt DESC
       `,
       [req.user.tenantId]
@@ -716,7 +719,7 @@ router.get('/export/csv', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const [rows] = await pool.promise().query(
-      `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? LIMIT 1`,
+      `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? AND isActive = TRUE LIMIT 1`,
       [req.params.id, req.user.tenantId]
     );
 
@@ -835,7 +838,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const setSql = updateFields.map((field) => `${field} = ?`).join(', ');
-    const updateSql = `UPDATE assets SET ${setSql} WHERE id = ? AND tenantId = ?`;
+    const updateSql = `UPDATE assets SET ${setSql} WHERE id = ? AND tenantId = ? AND isActive = TRUE`;
     const [result] = await pool.promise().query(
       updateSql,
       [...updateFields.map((field) => asset[field]), req.params.id, req.user.tenantId]
@@ -849,7 +852,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const [rows] = await pool.promise().query(
-      `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? LIMIT 1`,
+      `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? AND isActive = TRUE LIMIT 1`,
       [req.params.id, req.user.tenantId]
     );
 
@@ -867,7 +870,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const [result] = await pool.promise().query(
-      'DELETE FROM assets WHERE id = ? AND tenantId = ?',
+      'DELETE FROM assets WHERE id = ? AND tenantId = ? AND isActive = TRUE',
       [req.params.id, req.user.tenantId]
     );
 

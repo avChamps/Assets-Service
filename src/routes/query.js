@@ -3,7 +3,19 @@ const pool = require('../config/db');
 
 const router = express.Router();
 
-const ALLOWED_OPERATIONS = new Set(['CREATE','ALTER','SELECT', 'TRUNCATE','INSERT', 'UPDATE', 'DELETE','DROP']);
+const ALLOWED_OPERATIONS = new Set([
+  'CREATE',
+  'ALTER',
+  'SELECT',
+  'TRUNCATE',
+  'INSERT',
+  'UPDATE',
+  'DELETE',
+  'DROP',
+  'DESC',
+  'DESCRIBE',
+  'SHOW',
+]);
 
 function normalizeSql(sql) {
   return sql.trim().replace(/;+\s*$/, '');
@@ -28,72 +40,52 @@ function validateQuery(sql) {
   }
 
   const operation = getSqlOperation(sql);
+
   if (!ALLOWED_OPERATIONS.has(operation)) {
-    return 'Only SELECT, INSERT, UPDATE and DELETE statements are allowed';
+    return 'This SQL operation is not allowed';
   }
 
   return null;
 }
 
-
 router.post('/execute', async (req, res) => {
   try {
     const { query } = req.body;
 
-    if (!query) {
+    const validationError = validateQuery(query);
+    if (validationError) {
       return res.status(400).json({
         success: false,
-        message: 'Query is required'
+        message: validationError,
       });
     }
 
-    // Split multiple statements
-    const queries = query
-      .split(';')
-      .map(q => q.trim())
-      .filter(q => q.length > 0);
+    const sql = normalizeSql(query);
+    const operation = getSqlOperation(sql);
 
-    const results = [];
     const db = pool.promise();
-
-    for (const q of queries) {
-      const validationError = validateQuery(q);
-      if (validationError) {
-        return res.status(400).json({
-          success: false,
-          message: validationError
-        });
-      }
-
-      const sql = normalizeSql(q);
-      const operation = getSqlOperation(sql);
-
-      const [result] = await db.query(sql);
-
-      results.push({
-        operation,
-        data: operation === 'SELECT' ? result : undefined,
-        affectedRows: result.affectedRows,
-        insertId: result.insertId,
-        changedRows: result.changedRows
-      });
-    }
+    const [result] = await db.query(sql);
 
     return res.status(200).json({
       success: true,
-      message: 'All queries executed successfully',
-      results
+      message: 'Query executed successfully',
+      results: [
+        {
+          operation,
+          data: Array.isArray(result) ? result : undefined,
+          affectedRows: result?.affectedRows,
+          insertId: result?.insertId,
+          changedRows: result?.changedRows,
+        },
+      ],
     });
-
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: 'Server error while executing SQL query',
-      error: error.message
+      error: error.message,
     });
   }
 });
-
-
 
 module.exports = router;

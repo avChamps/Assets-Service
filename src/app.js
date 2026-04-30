@@ -11,8 +11,11 @@ const assetsRoutes = require('./routes/assets');
 const retiredInverotyRoutes = require('./routes/retiredInveroty');
 const ticktsRoutes = require('./routes/tickts');
 const analyticsRoutes = require('./routes/analytics');
+const reportsRoutes = require('./routes/reports');
+const documentsRoutes = require('./routes/documents');
 const warrantyTrackerRoutes = require('./routes/warrantyTracker');
 const tenantUserAuthRoutes = require('./routes/tenant-user-auth');
+const settingsRoutes = require('./routes/settings');
 const cors = require('cors');
 
 const app = express();
@@ -41,8 +44,11 @@ app.use('/api/assets', assetsRoutes);
 app.use('/api/retired-inventory', retiredInverotyRoutes);
 app.use('/api/tickets', ticktsRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/reports', reportsRoutes);
+app.use('/api/documents', documentsRoutes);
 app.use('/api/warranty-tracker', warrantyTrackerRoutes);
 app.use('/api/tenant-user-auth', tenantUserAuthRoutes);
+app.use('/api/settings', settingsRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -6,6 +6,10 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const nm = require('nodemailer');
 
+const DEFAULT_SIGNUP_SUBSCRIPTION_TYPE = 'trial';
+const DEFAULT_SIGNUP_SUBSCRIPTION_AMOUNT = 0;
+const DEFAULT_SIGNUP_SUBSCRIPTION_CURRENCY = 'INR';
+
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
     throw new Error('JWT_SECRET is not configured');
@@ -209,6 +213,7 @@ router.post('/create-user', async (req, res) => {
 
     const tenantId = uuidv4();
     const userId = uuidv4();
+    const subscriptionId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
 
     connection = await db.getConnection();
@@ -250,6 +255,33 @@ router.post('/create-user', async (req, res) => {
       'admin',
       'active',
       userId,
+      userId
+    ]);
+
+    const insertSubscriptionSql = `
+      INSERT INTO tenantSubscriptions (
+        subscriptionId,
+        tenantId,
+        subscriptionType,
+        amount,
+        currency,
+        subscriptionStartDate,
+        subscriptionEndDate,
+        paymentDate,
+        status,
+        notes,
+        createdBy
+      ) VALUES (?, ?, ?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH), NULL, ?, ?, ?)
+    `;
+
+    await connection.query(insertSubscriptionSql, [
+      subscriptionId,
+      tenantId,
+      subscriptionType || DEFAULT_SIGNUP_SUBSCRIPTION_TYPE,
+      DEFAULT_SIGNUP_SUBSCRIPTION_AMOUNT,
+      DEFAULT_SIGNUP_SUBSCRIPTION_CURRENCY,
+      'active',
+      'Initial subscription created during tenant signup',
       userId
     ]);
 

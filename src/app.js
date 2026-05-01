@@ -17,6 +17,7 @@ const warrantyTrackerRoutes = require('./routes/warrantyTracker');
 const tenantUserAuthRoutes = require('./routes/tenant-user-auth');
 const settingsRoutes = require('./routes/settings');
 const contactUsRoutes = require('./routes/contactus');
+const subscriptionsRoutes = require('./routes/subscriptions');
 const cors = require('cors');
 
 const app = express();
@@ -51,6 +52,7 @@ app.use('/api/warranty-tracker', warrantyTrackerRoutes);
 app.use('/api/tenant-user-auth', tenantUserAuthRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/contactus', contactUsRoutes);
+app.use('/api/subscriptions', subscriptionsRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

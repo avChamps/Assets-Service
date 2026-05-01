@@ -15,6 +15,7 @@ const ALLOWED_OPERATIONS = new Set([
   'DESC',
   'DESCRIBE',
   'SHOW',
+  'SET',
 ]);
 
 function normalizeSql(sql) {
@@ -26,8 +27,21 @@ function getSqlOperation(sql) {
   return match ? match[1].toUpperCase() : '';
 }
 
-function hasMultipleStatements(sql) {
-  return /;.+\S/s.test(sql);
+function splitSqlStatements(sql) {
+  return sql
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+}
+
+function validateSingleStatement(sql) {
+  const operation = getSqlOperation(sql);
+
+  if (!ALLOWED_OPERATIONS.has(operation)) {
+    return `SQL operation "${operation}" is not allowed`;
+  }
+
+  return null;
 }
 
 function validateQuery(sql) {
@@ -35,20 +49,23 @@ function validateQuery(sql) {
     return 'query is required and must be a string';
   }
 
-  if (hasMultipleStatements(sql)) {
-    return 'Only one SQL statement is allowed per request';
+  const statements = splitSqlStatements(sql);
+
+  if (!statements.length) {
+    return 'query is required and must be a valid SQL statement';
   }
 
-  const operation = getSqlOperation(sql);
-
-  if (!ALLOWED_OPERATIONS.has(operation)) {
-    return 'This SQL operation is not allowed';
+  for (const statement of statements) {
+    const error = validateSingleStatement(statement);
+    if (error) return error;
   }
 
   return null;
 }
 
 router.post('/execute', async (req, res) => {
+  let connection;
+
   try {
     const { query } = req.body;
 
@@ -60,24 +77,31 @@ router.post('/execute', async (req, res) => {
       });
     }
 
-    const sql = normalizeSql(query);
-    const operation = getSqlOperation(sql);
+    const statements = splitSqlStatements(query);
 
-    const db = pool.promise();
-    const [result] = await db.query(sql);
+    connection = await pool.promise().getConnection();
+
+    const results = [];
+
+    for (const statement of statements) {
+      const sql = normalizeSql(statement);
+      const operation = getSqlOperation(sql);
+
+      const [result] = await connection.query(sql);
+
+      results.push({
+        operation,
+        data: Array.isArray(result) ? result : undefined,
+        affectedRows: result?.affectedRows,
+        insertId: result?.insertId,
+        changedRows: result?.changedRows,
+      });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Query executed successfully',
-      results: [
-        {
-          operation,
-          data: Array.isArray(result) ? result : undefined,
-          affectedRows: result?.affectedRows,
-          insertId: result?.insertId,
-          changedRows: result?.changedRows,
-        },
-      ],
+      results,
     });
   } catch (error) {
     return res.status(500).json({
@@ -85,6 +109,8 @@ router.post('/execute', async (req, res) => {
       message: 'Server error while executing SQL query',
       error: error.message,
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

@@ -149,8 +149,9 @@ router.post('/', async (req, res) => {
         emailId,
         mobileNumber,
         companyName,
-        message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        message,
+        isActive
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
     `;
 
     const [result] = await db.query(sql, [

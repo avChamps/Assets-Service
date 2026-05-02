@@ -10,7 +10,9 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 const DEFAULT_CURRENCY = 'INR';
 const DEFAULT_SUBSCRIPTION_STATUS = 'active';
+const DEFAULT_RENEWAL_DAYS = 7;
 const ALLOWED_SUBSCRIPTION_STATUSES = new Set(['active', 'expired', 'cancelled', 'pending']);
+const REQUEST_FLAGS = new Set(['request', 'requests', 'pending-requests', 'pending_requests']);
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -65,6 +67,28 @@ function parseAmount(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function parseBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return value === 1 ? true : value === 0 ? false : null;
+  }
+
+  const text = cleanText(value).toLowerCase();
+
+  if (['true', '1', 'yes'].includes(text)) {
+    return true;
+  }
+
+  if (['false', '0', 'no'].includes(text)) {
+    return false;
+  }
+
+  return null;
+}
+
 function normalizeDate(value) {
   const text = cleanText(value);
 
@@ -82,6 +106,18 @@ function normalizeOptionalDate(value) {
   }
 
   return normalizeDate(value);
+}
+
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getSubscriptionFlag(query) {
+  return cleanText(query.flag || query.type || query.view).toLowerCase();
+}
+
+function isRequestFlag(flag) {
+  return REQUEST_FLAGS.has(flag);
 }
 
 function validateSubscriptionStatus(status) {
@@ -106,12 +142,97 @@ function validateTenantAccess(req, res, tenantId = req.user.tenantId) {
   return true;
 }
 
+async function closeSubscriptionRequest(connection, tenantId, closeRequest) {
+  if (closeRequest === undefined || closeRequest === null || closeRequest === false || closeRequest === '') {
+    return null;
+  }
+
+  const requestId = parsePositiveInteger(closeRequest, null);
+
+  if (requestId) {
+    const [result] = await connection.query(
+      `
+        UPDATE contactus
+        SET isActive = TRUE
+        WHERE id = ? AND tenantId = ? AND isActive = FALSE
+      `,
+      [requestId, tenantId]
+    );
+
+    if (result.affectedRows === 0) {
+      const [existingRows] = await connection.query(
+        `
+          SELECT id, isActive
+          FROM contactus
+          WHERE id = ? AND tenantId = ?
+          LIMIT 1
+        `,
+        [requestId, tenantId]
+      );
+
+      if (existingRows.length && Number(existingRows[0].isActive) === 1) {
+        return {
+          closeRequest: requestId,
+          affectedRows: 0,
+          alreadyClosed: true
+        };
+      }
+
+      return {
+        closeRequest: requestId,
+        affectedRows: 0,
+        error: 'No inactive contact request found for closeRequest'
+      };
+    }
+
+    return {
+      closeRequest: requestId,
+      affectedRows: result.affectedRows
+    };
+  }
+
+  const closeRequestFlag = parseBoolean(closeRequest);
+
+  if (closeRequestFlag === false) {
+    return null;
+  }
+
+  if (closeRequestFlag === true) {
+    const [result] = await connection.query(
+      `
+        UPDATE contactus
+        SET isActive = TRUE
+        WHERE tenantId = ? AND isActive = FALSE
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      [tenantId]
+    );
+
+    return {
+      closeRequest: true,
+      affectedRows: result.affectedRows
+    };
+  }
+
+  return {
+    closeRequest,
+    affectedRows: 0,
+    error: 'closeRequest must be a contact request id or boolean true'
+  };
+}
+
 function buildSubscriptionRequestFilters(query, tenantId) {
   const conditions = ['c.tenantId = ?'];
   const params = [tenantId];
+  const flag = getSubscriptionFlag(query);
   const duration = cleanText(query.duration).toLowerCase();
   const subscriptionType = cleanText(query.subscriptionType);
   const search = cleanText(query.search);
+
+  if (isRequestFlag(flag)) {
+    conditions.push('c.isActive = FALSE');
+  }
 
   if (duration) {
     conditions.push('LOWER(c.duration) = ?');
@@ -123,7 +244,7 @@ function buildSubscriptionRequestFilters(query, tenantId) {
       SELECT s.subscriptionType
       FROM tenantSubscriptions s
       WHERE s.tenantId = c.tenantId
-      ORDER BY s.subscriptionStartDate DESC, s.id DESC
+      ORDER BY s.updatedAt DESC, s.id DESC
       LIMIT 1
     ) = ?`);
     params.push(subscriptionType);
@@ -136,7 +257,7 @@ function buildSubscriptionRequestFilters(query, tenantId) {
         SELECT s.subscriptionType
         FROM tenantSubscriptions s
         WHERE s.tenantId = c.tenantId
-        ORDER BY s.subscriptionStartDate DESC, s.id DESC
+        ORDER BY s.updatedAt DESC, s.id DESC
         LIMIT 1
       ) LIKE ?
       OR c.fullName LIKE ?
@@ -166,15 +287,33 @@ function buildSubscriptionRequestFilters(query, tenantId) {
 }
 
 function buildTenantSubscriptionFilters(query, tenantId) {
-  const conditions = ['s.tenantId = ?'];
+  const conditions = [
+    's.tenantId = ?',
+    `s.id = (
+      SELECT latest.id
+      FROM tenantSubscriptions latest
+      WHERE latest.tenantId = s.tenantId
+      ORDER BY latest.updatedAt DESC, latest.id DESC
+      LIMIT 1
+    )`
+  ];
   const params = [tenantId];
+  const flag = getSubscriptionFlag(query);
   const status = cleanText(query.status).toLowerCase();
   const subscriptionType = cleanText(query.subscriptionType);
   const search = cleanText(query.search);
+  const renewalDays = Math.min(parsePositiveInteger(query.renewalDays, DEFAULT_RENEWAL_DAYS), 365);
 
   if (status) {
     conditions.push('LOWER(s.status) = ?');
     params.push(status);
+  } else if (flag === 'live' || flag === 'active') {
+    conditions.push('s.subscriptionEndDate >= CURDATE()');
+  } else if (flag === 'paused' || flag === 'inactive') {
+    conditions.push('s.subscriptionEndDate < CURDATE()');
+  } else if (flag === 'renewal' || flag === 'due') {
+    conditions.push('s.subscriptionEndDate BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)');
+    params.push(renewalDays);
   }
 
   if (subscriptionType) {
@@ -203,9 +342,15 @@ function buildTenantSubscriptionFilters(query, tenantId) {
 
 router.use(authenticateToken);
 
-// GET /api/subscriptions/records?page=1&limit=10&status=active&subscriptionType=basic
+// GET /api/subscriptions/records?page=1&limit=10&flag=live&subscriptionType=basic
 async function getTenantSubscriptions(req, res) {
   try {
+    const flag = getSubscriptionFlag(req.query);
+
+    if (isRequestFlag(flag)) {
+      return getSubscriptionRequests(req, res);
+    }
+
     const requestedTenantId = cleanText(req.query.tenantId);
 
     if (!validateTenantAccess(req, res, requestedTenantId || req.user.tenantId)) {
@@ -244,13 +389,28 @@ async function getTenantSubscriptions(req, res) {
         s.updatedBy,
         updatedUser.fullName AS updatedByName,
         s.createdAt,
-        s.updatedAt
+        s.updatedAt,
+        (
+          SELECT COUNT(*)
+          FROM users tenantUsers
+          WHERE tenantUsers.tenantId = s.tenantId
+        ) AS totalUsers,
+        (
+          SELECT COUNT(*)
+          FROM assets tenantAssets
+          WHERE tenantAssets.tenantId = s.tenantId
+        ) AS totalAssets,
+        (
+          SELECT COUNT(*)
+          FROM documents tenantDocuments
+          WHERE tenantDocuments.tenantId = s.tenantId
+        ) AS totalDocuments
       FROM tenantSubscriptions s
       LEFT JOIN tenants t ON t.tenantId = s.tenantId
       LEFT JOIN users createdUser ON createdUser.userId = s.createdBy AND createdUser.tenantId = s.tenantId
       LEFT JOIN users updatedUser ON updatedUser.userId = s.updatedBy AND updatedUser.tenantId = s.tenantId
       ${whereSql}
-      ORDER BY s.subscriptionStartDate DESC, s.id DESC
+      ORDER BY s.updatedAt DESC, s.id DESC
       LIMIT ? OFFSET ?
     `;
 
@@ -283,8 +443,13 @@ async function getTenantSubscriptions(req, res) {
   }
 }
 
+// POST /api/subscriptions
 // POST /api/subscriptions/records
-router.post('/records', async (req, res) => {
+async function createTenantSubscription(req, res) {
+  const db = pool.promise();
+  let connection;
+  let transactionStarted = false;
+
   try {
     const tenantId = cleanText(req.body?.tenantId) || req.user.tenantId;
 
@@ -295,7 +460,9 @@ router.post('/records', async (req, res) => {
     const subscriptionType = cleanText(req.body?.subscriptionType);
     const amount = parseAmount(req.body?.amount);
     const currency = cleanText(req.body?.currency) || DEFAULT_CURRENCY;
-    const subscriptionStartDate = normalizeDate(req.body?.subscriptionStartDate);
+    const subscriptionStartDate = req.body?.subscriptionStartDate === undefined
+      ? getTodayDateString()
+      : normalizeDate(req.body.subscriptionStartDate);
     const subscriptionEndDate = normalizeDate(req.body?.subscriptionEndDate);
     const paymentDate = normalizeOptionalDate(req.body?.paymentDate);
     const status = (cleanText(req.body?.status) || DEFAULT_SUBSCRIPTION_STATUS).toLowerCase();
@@ -305,7 +472,14 @@ router.post('/records', async (req, res) => {
     if (!subscriptionType || amount === null || !subscriptionStartDate || !subscriptionEndDate) {
       return res.status(400).json({
         success: false,
-        message: 'subscriptionType, amount, subscriptionStartDate and subscriptionEndDate are required'
+        message: 'subscriptionType, amount and subscriptionEndDate are required'
+      });
+    }
+
+    if (req.body?.subscriptionStartDate !== undefined && !subscriptionStartDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'subscriptionStartDate must be a valid date'
       });
     }
 
@@ -331,7 +505,6 @@ router.post('/records', async (req, res) => {
     }
 
     const subscriptionId = uuidv4();
-    const db = pool.promise();
     const sql = `
       INSERT INTO tenantSubscriptions (
         subscriptionId,
@@ -348,7 +521,11 @@ router.post('/records', async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    await db.query(sql, [
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    await connection.query(sql, [
       subscriptionId,
       tenantId,
       subscriptionType,
@@ -362,21 +539,48 @@ router.post('/records', async (req, res) => {
       req.user.userId
     ]);
 
+    const closedRequest = await closeSubscriptionRequest(connection, tenantId, req.body?.closeRequest);
+
+    if (closedRequest?.error) {
+      await connection.rollback();
+      transactionStarted = false;
+
+      return res.status(400).json({
+        success: false,
+        message: closedRequest.error
+      });
+    }
+
+    await connection.commit();
+    transactionStarted = false;
+
     return res.status(201).json({
       success: true,
       message: 'Tenant subscription created successfully',
       data: {
-        subscriptionId
+        subscriptionId,
+        closedRequest
       }
     });
   } catch (error) {
+    if (connection && transactionStarted) {
+      await connection.rollback();
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Server error while creating tenant subscription',
       error: error.message
     });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
-});
+}
+
+router.post('/', createTenantSubscription);
+router.post('/records', createTenantSubscription);
 
 // PUT /api/subscriptions/records/:subscriptionId
 router.put('/records/:subscriptionId', async (req, res) => {
@@ -590,7 +794,7 @@ async function getSubscriptionRequests(req, res) {
           SELECT s.subscriptionType
           FROM tenantSubscriptions s
           WHERE s.tenantId = c.tenantId
-          ORDER BY s.subscriptionStartDate DESC, s.id DESC
+          ORDER BY s.updatedAt DESC, s.id DESC
           LIMIT 1
         ) AS subscriptionType,
         c.fullName,
@@ -598,32 +802,34 @@ async function getSubscriptionRequests(req, res) {
         c.mobileNumber,
         c.companyName,
         c.message,
+        c.isActive,
+        CASE WHEN c.isActive = TRUE THEN 'closed' ELSE 'pending' END AS requestStatus,
         (
           SELECT s.subscriptionStartDate
           FROM tenantSubscriptions s
           WHERE s.tenantId = c.tenantId
-          ORDER BY s.subscriptionStartDate DESC, s.id DESC
+          ORDER BY s.updatedAt DESC, s.id DESC
           LIMIT 1
         ) AS subscriptionStartDate,
         (
           SELECT s.subscriptionEndDate
           FROM tenantSubscriptions s
           WHERE s.tenantId = c.tenantId
-          ORDER BY s.subscriptionStartDate DESC, s.id DESC
+          ORDER BY s.updatedAt DESC, s.id DESC
           LIMIT 1
         ) AS subscriptionEndDate,
         (
           SELECT s.amount
           FROM tenantSubscriptions s
           WHERE s.tenantId = c.tenantId
-          ORDER BY s.subscriptionStartDate DESC, s.id DESC
+          ORDER BY s.updatedAt DESC, s.id DESC
           LIMIT 1
         ) AS amount,
         (
           SELECT s.currency
           FROM tenantSubscriptions s
           WHERE s.tenantId = c.tenantId
-          ORDER BY s.subscriptionStartDate DESC, s.id DESC
+          ORDER BY s.updatedAt DESC, s.id DESC
           LIMIT 1
         ) AS currency,
         (

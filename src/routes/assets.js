@@ -463,6 +463,56 @@ async function getNextAssetTagSequence(db, tenantId) {
   return Number(rows[0]?.nextSequence || 1);
 }
 
+async function getTenantAssetLimit(db, tenantId) {
+  const [rows] = await db.query(
+    `
+      SELECT
+        latest.subscriptionType,
+        sp.maxAssets,
+        (
+          SELECT COUNT(*)
+          FROM assets tenantAssets
+          WHERE tenantAssets.tenantId = ?
+            AND tenantAssets.isActive = TRUE
+        ) AS activeAssets
+      FROM (
+        SELECT
+          COALESCE((
+            SELECT s.subscriptionType
+            FROM tenantSubscriptions s
+            WHERE s.tenantId = t.tenantId
+            ORDER BY s.updatedAt DESC, s.id DESC
+            LIMIT 1
+          ), t.subscriptionType) AS subscriptionType
+        FROM tenants t
+        WHERE t.tenantId = ?
+        LIMIT 1
+      ) latest
+      LEFT JOIN subscriptionPlans sp
+        ON sp.subscriptionType = latest.subscriptionType
+        AND sp.isActive = TRUE
+      LIMIT 1
+    `,
+    [tenantId, tenantId]
+  );
+
+  return rows[0] || null;
+}
+
+function hasReachedAssetLimit(assetLimit, pendingAssets = 0) {
+  return assetLimit
+    && assetLimit.maxAssets !== null
+    && Number(assetLimit.activeAssets) + pendingAssets >= Number(assetLimit.maxAssets);
+}
+
+function buildAssetLimitResponse(assetLimit) {
+  return {
+    subscriptionType: assetLimit.subscriptionType,
+    maxAssets: Number(assetLimit.maxAssets),
+    activeAssets: Number(assetLimit.activeAssets)
+  };
+}
+
 function validateAssetForInsert(asset) {
   const missingFields = getMissingRequiredFields(asset);
 
@@ -627,9 +677,20 @@ router.post('/upload', async (req, res) => {
     const insertedIds = [];
     const db = pool.promise();
     let nextAssetTagSequence = await getNextAssetTagSequence(db, req.user.tenantId);
+    const assetLimit = await getTenantAssetLimit(db, req.user.tenantId);
     let failedRows = logs.length;
 
     for (const { rowNumber, record } of records) {
+      if (hasReachedAssetLimit(assetLimit, insertedIds.length)) {
+        failedRows += 1;
+        logs.push({
+          row: rowNumber,
+          type: 'error',
+          message: 'Asset limit reached for current subscription plan'
+        });
+        continue;
+      }
+
       const asset = buildInsertAsset({
         ...record,
         tenantId: req.user.tenantId,
@@ -744,6 +805,16 @@ router.get('/:id', async (req, res) => {
 router.post('/create', async (req, res) => {
   try {
     const db = pool.promise();
+    const assetLimit = await getTenantAssetLimit(db, req.user.tenantId);
+
+    if (hasReachedAssetLimit(assetLimit)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Asset limit reached for current subscription plan',
+        data: buildAssetLimitResponse(assetLimit)
+      });
+    }
+
     const assetTag = formatAssetTag(await getNextAssetTagSequence(db, req.user.tenantId));
     const asset = buildInsertAsset({
       ...req.body,

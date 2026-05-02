@@ -1,5 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const nm = require('nodemailer');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
 
@@ -20,6 +21,22 @@ function getJwtSecret() {
   }
 
   return process.env.JWT_SECRET;
+}
+
+function getEmailConfig() {
+  const config = {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: process.env.SMTP_SECURE !== 'false',
+    user: process.env.SMTP_USER,
+    password: process.env.SMTP_PASSWORD
+  };
+
+  if (!config.host || !config.user || !config.password) {
+    throw new Error('Email configuration missing. Set SMTP_HOST, SMTP_USER and SMTP_PASSWORD.');
+  }
+
+  return config;
 }
 
 function authenticateToken(req, res, next) {
@@ -55,6 +72,15 @@ function authenticateToken(req, res, next) {
 
 function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function parsePositiveInteger(value, fallback) {
@@ -128,6 +154,125 @@ function validateSubscriptionStatus(status) {
   return ALLOWED_SUBSCRIPTION_STATUSES.has(status)
     ? null
     : `status must be one of ${Array.from(ALLOWED_SUBSCRIPTION_STATUSES).join(', ')}`;
+}
+
+function formatAmount(amount, currency) {
+  const numericAmount = Number(amount);
+
+  if (!Number.isFinite(numericAmount)) {
+    return `${currency} ${amount}`;
+  }
+
+  return `${currency} ${numericAmount.toFixed(2)}`;
+}
+
+async function getSubscriptionPlan(connection, subscriptionType) {
+  const [rows] = await connection.query(
+    `
+      SELECT subscriptionType, maxUsers, maxAssets
+      FROM subscriptionPlans
+      WHERE subscriptionType = ? AND isActive = TRUE
+      LIMIT 1
+    `,
+    [subscriptionType]
+  );
+
+  return rows[0] || null;
+}
+
+async function getSubscriptionMailRecipient(connection, tenantId, fallbackUserId) {
+  const [rows] = await connection.query(
+    `
+      SELECT
+        u.fullName,
+        u.workEmail,
+        t.companyName
+      FROM users u
+      INNER JOIN tenants t ON t.tenantId = u.tenantId
+      WHERE u.tenantId = ?
+        AND u.status = 'active'
+        AND (u.role = 'admin' OR u.userId = ?)
+      ORDER BY CASE WHEN u.role = 'admin' THEN 0 ELSE 1 END, u.fullName ASC
+      LIMIT 1
+    `,
+    [tenantId, fallbackUserId]
+  );
+
+  return rows[0] || null;
+}
+
+async function sendSubscriptionUpdateMail(recipient, subscription) {
+  const emailConfig = getEmailConfig();
+  const transporter = nm.createTransport({
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: {
+      user: emailConfig.user,
+      pass: emailConfig.password
+    }
+  });
+
+  const safeFullName = escapeHtml(recipient.fullName || 'User');
+  const safeCompanyName = escapeHtml(recipient.companyName || 'your company');
+  const safeSubscriptionType = escapeHtml(subscription.subscriptionType);
+  const safeStartDate = escapeHtml(subscription.subscriptionStartDate);
+  const safeEndDate = escapeHtml(subscription.subscriptionEndDate);
+  const safeAmount = escapeHtml(formatAmount(subscription.amount, subscription.currency));
+  const safeMaxUsers = escapeHtml(subscription.maxUsers);
+  const safeMaxAssets = escapeHtml(subscription.maxAssets);
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Subscription Plan Updated</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f7f6;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6;">
+        <tr>
+          <td align="center" style="padding: 40px 16px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #dfe3e8; border-radius: 12px;">
+              <tr>
+                <td style="padding: 36px 40px 12px 40px;">
+                  <h1 style="margin: 0; font-size: 28px; color: #1c293b;">Subscription plan updated</h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 12px 40px 28px 40px; color: #555555; font-size: 16px; line-height: 1.6;">
+                  <p style="margin: 0 0 18px;">Hello ${safeFullName},</p>
+                  <p style="margin: 0 0 18px;">The subscription plan for ${safeCompanyName} has been updated.</p>
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; border-radius: 8px;">
+                    <tr><td style="padding: 16px 18px 8px;"><strong>Plan:</strong> ${safeSubscriptionType}</td></tr>
+                    <tr><td style="padding: 8px 18px;"><strong>Start date:</strong> ${safeStartDate}</td></tr>
+                    <tr><td style="padding: 8px 18px;"><strong>End date:</strong> ${safeEndDate}</td></tr>
+                    <tr><td style="padding: 8px 18px;"><strong>Amount:</strong> ${safeAmount}</td></tr>
+                    <tr><td style="padding: 8px 18px;"><strong>Allowed users:</strong> ${safeMaxUsers}</td></tr>
+                    <tr><td style="padding: 8px 18px 16px;"><strong>Allowed assets:</strong> ${safeMaxAssets}</td></tr>
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 0 40px 32px 40px; color: #555555; font-size: 14px;">
+                  <p style="margin: 0;"><strong>Sincerely,</strong><br>The AV Champs Team</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return transporter.sendMail({
+    from: emailConfig.user,
+    to: recipient.workEmail,
+    subject: 'Your AV Champs subscription plan has been updated',
+    html: htmlContent
+  });
 }
 
 function validateTenantAccess(req, res, tenantId = req.user.tenantId) {
@@ -525,6 +670,20 @@ async function createTenantSubscription(req, res) {
     await connection.beginTransaction();
     transactionStarted = true;
 
+    const subscriptionPlan = await getSubscriptionPlan(connection, subscriptionType);
+
+    if (!subscriptionPlan) {
+      await connection.rollback();
+      transactionStarted = false;
+
+      return res.status(400).json({
+        success: false,
+        message: 'Subscription plan not found or inactive'
+      });
+    }
+
+    const mailRecipient = await getSubscriptionMailRecipient(connection, tenantId, req.user.userId);
+
     await connection.query(sql, [
       subscriptionId,
       tenantId,
@@ -554,11 +713,43 @@ async function createTenantSubscription(req, res) {
     await connection.commit();
     transactionStarted = false;
 
+    let emailSent = false;
+    let emailError = null;
+
+    if (mailRecipient?.workEmail) {
+      try {
+        await sendSubscriptionUpdateMail(mailRecipient, {
+          subscriptionType,
+          amount,
+          currency,
+          subscriptionStartDate,
+          subscriptionEndDate,
+          maxUsers: subscriptionPlan.maxUsers,
+          maxAssets: subscriptionPlan.maxAssets
+        });
+        emailSent = true;
+      } catch (error) {
+        emailError = error.message;
+      }
+    }
+
     return res.status(201).json({
       success: true,
-      message: 'Tenant subscription created successfully',
+      message: emailError
+        ? 'Tenant subscription created successfully, but notification email failed'
+        : 'Tenant subscription created successfully',
       data: {
         subscriptionId,
+        subscriptionType,
+        subscriptionStartDate,
+        subscriptionEndDate,
+        amount,
+        currency,
+        maxUsers: Number(subscriptionPlan.maxUsers),
+        maxAssets: Number(subscriptionPlan.maxAssets),
+        emailSent,
+        emailTo: mailRecipient?.workEmail || null,
+        emailError,
         closedRequest
       }
     });

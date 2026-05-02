@@ -290,6 +290,42 @@ function buildListFilters(query, tenantId) {
   };
 }
 
+async function getTenantUserLimit(connection, tenantId) {
+  const [rows] = await connection.query(
+    `
+      SELECT
+        latest.subscriptionType,
+        sp.maxUsers,
+        (
+          SELECT COUNT(*)
+          FROM users tenantUsers
+          WHERE tenantUsers.tenantId = ?
+            AND tenantUsers.status = 'active'
+        ) AS activeUsers
+      FROM (
+        SELECT
+          COALESCE((
+            SELECT s.subscriptionType
+            FROM tenantSubscriptions s
+            WHERE s.tenantId = t.tenantId
+            ORDER BY s.updatedAt DESC, s.id DESC
+            LIMIT 1
+          ), t.subscriptionType) AS subscriptionType
+        FROM tenants t
+        WHERE t.tenantId = ?
+        LIMIT 1
+      ) latest
+      LEFT JOIN subscriptionPlans sp
+        ON sp.subscriptionType = latest.subscriptionType
+        AND sp.isActive = TRUE
+      LIMIT 1
+    `,
+    [tenantId, tenantId]
+  );
+
+  return rows[0] || null;
+}
+
 router.use(authenticateToken);
 
 // POST /api/tenant-user-auth/users
@@ -328,10 +364,33 @@ router.post('/users', async (req, res) => {
     const userId = uuidv4();
     const temporaryPassword = generateTemporaryPassword();
     const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+    const nextStatus = status || 'active';
 
     connection = await db.getConnection();
     await connection.beginTransaction();
     transactionStarted = true;
+
+    const userLimit = await getTenantUserLimit(connection, req.user.tenantId);
+
+    if (
+      String(nextStatus).toLowerCase() === 'active'
+      && userLimit
+      && userLimit.maxUsers !== null
+      && Number(userLimit.activeUsers) >= Number(userLimit.maxUsers)
+    ) {
+      await connection.rollback();
+      transactionStarted = false;
+
+      return res.status(403).json({
+        success: false,
+        message: 'User limit reached for current subscription plan',
+        data: {
+          subscriptionType: userLimit.subscriptionType,
+          maxUsers: Number(userLimit.maxUsers),
+          activeUsers: Number(userLimit.activeUsers)
+        }
+      });
+    }
 
     const insertSql = `
       INSERT INTO users (
@@ -350,7 +409,7 @@ router.post('/users', async (req, res) => {
       location || null,
       hashedPassword,
       role || 'user',
-      status || 'active',
+      nextStatus,
       req.user.userId,
       req.user.userId
     ]);

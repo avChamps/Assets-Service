@@ -215,6 +215,7 @@ router.post('/create-user', async (req, res) => {
     const userId = uuidv4();
     const subscriptionId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
+    const effectiveSubscriptionType = subscriptionType || DEFAULT_SIGNUP_SUBSCRIPTION_TYPE;
 
     connection = await db.getConnection();
     await connection.beginTransaction();
@@ -233,7 +234,7 @@ router.post('/create-user', async (req, res) => {
       companyDomain || null,
       companySize || null,
       expectedAssets || null,
-      subscriptionType || null
+      effectiveSubscriptionType
     ]);
 
     const insertUserSql = `
@@ -277,7 +278,7 @@ router.post('/create-user', async (req, res) => {
     await connection.query(insertSubscriptionSql, [
       subscriptionId,
       tenantId,
-      subscriptionType || DEFAULT_SIGNUP_SUBSCRIPTION_TYPE,
+      effectiveSubscriptionType,
       DEFAULT_SIGNUP_SUBSCRIPTION_AMOUNT,
       DEFAULT_SIGNUP_SUBSCRIPTION_CURRENCY,
       'active',
@@ -294,7 +295,8 @@ router.post('/create-user', async (req, res) => {
         tenantId,
         workEmail,
         role: 'admin',
-        companyName
+        companyName,
+        subscriptionType: effectiveSubscriptionType
       },
       getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
@@ -310,6 +312,7 @@ router.post('/create-user', async (req, res) => {
         fullName,
         workEmail,
         companyName,
+        subscriptionType: effectiveSubscriptionType,
         jobTitle,
         location: location || null
       }
@@ -365,7 +368,13 @@ router.post('/login-generate-otp', async (req, res) => {
         t.companyDomain,
         t.companySize,
         t.expectedAssets,
-        t.subscriptionType
+        COALESCE((
+          SELECT s.subscriptionType
+          FROM tenantSubscriptions s
+          WHERE s.tenantId = u.tenantId
+          ORDER BY s.updatedAt DESC, s.id DESC
+          LIMIT 1
+        ), t.subscriptionType) AS subscriptionType
       FROM users u
       INNER JOIN tenants t ON t.tenantId = u.tenantId
       WHERE u.workEmail = ?

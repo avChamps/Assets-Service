@@ -18,6 +18,7 @@ const tenantUserAuthRoutes = require('./routes/tenant-user-auth');
 const settingsRoutes = require('./routes/settings');
 const contactUsRoutes = require('./routes/contactus');
 const subscriptionsRoutes = require('./routes/subscriptions');
+const { startSubscriptionReminderJob } = require('./jobs/subscriptionReminders');
 const cors = require('cors');
 
 const app = express();
@@ -57,4 +58,5 @@ app.use('/api/subscriptions', subscriptionsRoutes);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  startSubscriptionReminderJob();
 });

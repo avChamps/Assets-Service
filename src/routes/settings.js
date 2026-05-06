@@ -104,6 +104,16 @@ function selectFirstColumn(columns, tableAlias, columnNames, alias) {
   return columnName ? `${tableAlias}.${columnName} AS ${alias}` : `NULL AS ${alias}`;
 }
 
+function selectLatestTenantSubscriptionColumn(columnName, alias = columnName) {
+  return `(
+            SELECT s.${columnName}
+            FROM tenantSubscriptions s
+            WHERE s.tenantId = t.tenantId
+            ORDER BY s.updatedAt DESC, s.id DESC
+            LIMIT 1
+          ) AS ${alias}`;
+}
+
 function mapCountRows(rows, key) {
   return rows.map((row) => ({
     [key]: row.name,
@@ -164,11 +174,14 @@ router.get('/', async (req, res) => {
       selectColumn(tenantColumns, 't', 'companyDomain'),
       selectColumn(tenantColumns, 't', 'companySize'),
       selectColumn(tenantColumns, 't', 'expectedAssets'),
-      selectColumn(tenantColumns, 't', 'subscriptionType'),
+      selectColumn(tenantColumns, 't', 'subscriptionType', 'tenantSubscriptionType'),
       selectFirstColumn(tenantColumns, 't', ['addressLine1', 'address1', 'address'], 'addressLine1'),
       selectFirstColumn(tenantColumns, 't', ['addressLine2', 'address2'], 'addressLine2'),
-      selectFirstColumn(tenantColumns, 't', ['subscriptionStartDate', 'subscriptionStart', 'startDate', 'createdAt'], 'subscriptionStartDate'),
-      selectFirstColumn(tenantColumns, 't', ['subscriptionEndDate', 'subscriptionEnd', 'renewalDate', 'nextRenewalDate'], 'subscriptionEndDate')
+      selectFirstColumn(tenantColumns, 't', ['subscriptionStartDate', 'subscriptionStart', 'startDate', 'createdAt'], 'tenantSubscriptionStartDate'),
+      selectFirstColumn(tenantColumns, 't', ['subscriptionEndDate', 'subscriptionEnd', 'renewalDate', 'nextRenewalDate'], 'tenantSubscriptionEndDate'),
+      selectLatestTenantSubscriptionColumn('subscriptionType', 'latestSubscriptionType'),
+      selectLatestTenantSubscriptionColumn('subscriptionStartDate', 'latestSubscriptionStartDate'),
+      selectLatestTenantSubscriptionColumn('subscriptionEndDate', 'latestSubscriptionEndDate')
     ];
 
     const [profileRows] = await db.query(
@@ -191,8 +204,10 @@ router.get('/', async (req, res) => {
     }
 
     const profile = profileRows[0];
-    const subscriptionStartDate = normalizeDate(profile.subscriptionStartDate);
-    const subscriptionEndDate = normalizeDate(profile.subscriptionEndDate)
+    const subscriptionStartDate = normalizeDate(profile.latestSubscriptionStartDate)
+      || normalizeDate(profile.tenantSubscriptionStartDate);
+    const subscriptionEndDate = normalizeDate(profile.latestSubscriptionEndDate)
+      || normalizeDate(profile.tenantSubscriptionEndDate)
       || (subscriptionStartDate ? addDays(subscriptionStartDate, RENEWAL_PERIOD_DAYS) : null);
 
     const regionsSql = `
@@ -251,7 +266,7 @@ router.get('/', async (req, res) => {
           subscriptionStartDate,
           subscriptionEndDate,
           daysLeftForRenewal: calculateDaysLeft(subscriptionEndDate),
-          currentPlan: profile.subscriptionType || null,
+          currentPlan: profile.latestSubscriptionType || profile.tenantSubscriptionType || null,
           companyDomain: profile.companyDomain || null,
           companySize: profile.companySize || null,
           expectedAssets: profile.expectedAssets || null

@@ -18,6 +18,8 @@ const tenantUserAuthRoutes = require('./routes/tenant-user-auth');
 const settingsRoutes = require('./routes/settings');
 const contactUsRoutes = require('./routes/contactus');
 const subscriptionsRoutes = require('./routes/subscriptions');
+const auditLogRoutes = require('./routes/audit-log');
+const maintainanceRoutes = require('./routes/maintainance');
 const { startSubscriptionReminderJob } = require('./jobs/subscriptionReminders');
 const cors = require('cors');
 
@@ -54,6 +56,8 @@ app.use('/api/tenant-user-auth', tenantUserAuthRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/contactus', contactUsRoutes);
 app.use('/api/subscriptions', subscriptionsRoutes);
+app.use('/api/audit-log', auditLogRoutes);
+app.use('/api/maintainance', maintainanceRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

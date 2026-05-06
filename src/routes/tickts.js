@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { logAuditEvent } = require('../utils/auditLogger');
 
 const router = express.Router();
 
@@ -490,6 +491,17 @@ router.get('/export/csv', async (req, res) => {
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="tickets.csv"');
+
+    await logAuditEvent({
+      req,
+      action: 'ticket.download',
+      entityType: 'ticket',
+      entityLabel: 'tickets.csv',
+      metadata: {
+        rowCount: rows.length,
+        filters: req.query
+      }
+    });
 
     return res.status(200).send(csv);
   } catch (error) {

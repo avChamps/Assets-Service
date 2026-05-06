@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { logAuditEvent } = require('../utils/auditLogger');
 
 const router = express.Router();
 
@@ -731,6 +732,19 @@ router.post('/upload', async (req, res) => {
 
     const insertedRows = insertedIds.length;
 
+    await logAuditEvent({
+      req,
+      action: 'asset.upload',
+      entityType: 'asset',
+      entityLabel: 'Asset CSV import',
+      metadata: {
+        totalRows,
+        insertedRows,
+        failedRows,
+        insertedIds
+      }
+    });
+
     return res.status(200).json({
       success: failedRows === 0,
       message: failedRows
@@ -769,6 +783,16 @@ router.get('/export/csv', async (req, res) => {
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="assets.csv"');
+
+    await logAuditEvent({
+      req,
+      action: 'asset.download',
+      entityType: 'asset',
+      entityLabel: 'Assets CSV export',
+      metadata: {
+        rowCount: assets.length
+      }
+    });
 
     return res.status(200).send(csv);
   } catch (error) {
@@ -865,6 +889,19 @@ router.post('/create', async (req, res) => {
       [asset.id, req.user.tenantId]
     );
 
+    await logAuditEvent({
+      req,
+      action: 'asset.create',
+      entityType: 'asset',
+      entityId: asset.id,
+      entityLabel: asset.assetTag,
+      metadata: {
+        assetTag: asset.assetTag,
+        assetName: asset.assetName,
+        assetType: asset.assetType
+      }
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Asset created successfully',
@@ -927,6 +964,19 @@ router.put('/:id', async (req, res) => {
       [req.params.id, req.user.tenantId]
     );
 
+    await logAuditEvent({
+      req,
+      action: 'asset.update',
+      entityType: 'asset',
+      entityId: req.params.id,
+      entityLabel: rows[0]?.assetTag,
+      metadata: {
+        changedFields: updateFields,
+        assetName: rows[0]?.assetName,
+        assetType: rows[0]?.assetType
+      }
+    });
+
     return res.status(200).json({
       success: true,
       message: 'Asset updated successfully',
@@ -940,7 +990,12 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/assets/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const [result] = await pool.promise().query(
+    const db = pool.promise();
+    const [assetRows] = await db.query(
+      `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? AND isActive = TRUE LIMIT 1`,
+      [req.params.id, req.user.tenantId]
+    );
+    const [result] = await db.query(
       'DELETE FROM assets WHERE id = ? AND tenantId = ? AND isActive = TRUE',
       [req.params.id, req.user.tenantId]
     );
@@ -951,6 +1006,18 @@ router.delete('/:id', async (req, res) => {
         message: 'Asset not found'
       });
     }
+
+    await logAuditEvent({
+      req,
+      action: 'asset.delete',
+      entityType: 'asset',
+      entityId: req.params.id,
+      entityLabel: assetRows[0]?.assetTag,
+      metadata: {
+        assetName: assetRows[0]?.assetName,
+        assetType: assetRows[0]?.assetType
+      }
+    });
 
     return res.status(200).json({
       success: true,

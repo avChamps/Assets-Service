@@ -8,6 +8,10 @@ function getRequiredEnv(name) {
     throw new Error(`${name} is not configured`);
   }
 
+  if (/^your-.+/.test(value)) {
+    throw new Error(`${name} is still set to the placeholder value '${value}'`);
+  }
+
   return value;
 }
 
@@ -49,6 +53,12 @@ async function uploadToVPS(localPath, remoteFilename, folder = 'Product-Images')
     await sftp.put(localPath, remotePath);
 
     return publicPath;
+  } catch (error) {
+    if (/All configured authentication methods failed/i.test(error.message)) {
+      throw new Error('SFTP authentication failed. Check VPS_SFTP_USERNAME and VPS_SFTP_PASSWORD.');
+    }
+
+    throw error;
   } finally {
     await sftp.end();
   }

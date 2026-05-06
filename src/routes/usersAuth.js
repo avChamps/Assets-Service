@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const nm = require('nodemailer');
+const { logAuditEvent } = require('../utils/auditLogger');
 
 const DEFAULT_SIGNUP_SUBSCRIPTION_TYPE = 'trial';
 const DEFAULT_SIGNUP_SUBSCRIPTION_AMOUNT = 0;
@@ -289,6 +290,23 @@ router.post('/create-user', async (req, res) => {
     await connection.commit();
     transactionStarted = false;
 
+    await logAuditEvent({
+      req,
+      tenantId,
+      actorUserId: userId,
+      actorEmail: workEmail,
+      action: 'user.create',
+      entityType: 'user',
+      entityId: userId,
+      entityLabel: fullName,
+      metadata: {
+        source: 'signup',
+        companyName,
+        role: 'admin',
+        subscriptionType: effectiveSubscriptionType
+      }
+    });
+
     const token = jwt.sign(
       {
         userId,
@@ -383,6 +401,17 @@ router.post('/login-generate-otp', async (req, res) => {
     const [rows] = await pool.promise().query(sql, [workEmail]);
 
     if (!rows.length) {
+      await logAuditEvent({
+        req,
+        actorEmail: workEmail,
+        action: 'login.attempt',
+        entityType: 'auth',
+        status: 'failed',
+        metadata: {
+          reason: 'invalid_credentials'
+        }
+      });
+
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -392,6 +421,19 @@ router.post('/login-generate-otp', async (req, res) => {
     const user = rows[0];
 
     if (user.status && user.status !== 'active') {
+      await logAuditEvent({
+        req,
+        tenantId: user.tenantId,
+        actorUserId: user.userId,
+        actorEmail: user.workEmail,
+        action: 'login.attempt',
+        entityType: 'auth',
+        status: 'failed',
+        metadata: {
+          reason: 'inactive_account'
+        }
+      });
+
       return res.status(403).json({
         success: false,
         message: 'User account is not active'
@@ -401,6 +443,19 @@ router.post('/login-generate-otp', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
+      await logAuditEvent({
+        req,
+        tenantId: user.tenantId,
+        actorUserId: user.userId,
+        actorEmail: user.workEmail,
+        action: 'login.attempt',
+        entityType: 'auth',
+        status: 'failed',
+        metadata: {
+          reason: 'invalid_credentials'
+        }
+      });
+
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -430,6 +485,18 @@ router.post('/login-generate-otp', async (req, res) => {
       getJwtSecret(),
       { expiresIn: '2m' }
     );
+
+    await logAuditEvent({
+      req,
+      tenantId: user.tenantId,
+      actorUserId: user.userId,
+      actorEmail: user.workEmail,
+      action: 'login.otp_request',
+      entityType: 'auth',
+      metadata: {
+        workEmail: user.workEmail
+      }
+    });
 
     return res.status(200).json({
       success: true,
@@ -482,6 +549,19 @@ router.post('/verify-login-otp', async (req, res) => {
     }
 
     if (decoded.purpose !== 'login_otp' || String(decoded.otp) !== String(otp)) {
+      await logAuditEvent({
+        req,
+        tenantId: decoded.tenantId,
+        actorUserId: decoded.userId,
+        actorEmail: decoded.workEmail,
+        action: 'login.verify',
+        entityType: 'auth',
+        status: 'failed',
+        metadata: {
+          reason: 'invalid_otp'
+        }
+      });
+
       return res.status(401).json({
         success: false,
         message: 'Invalid OTP'
@@ -498,6 +578,18 @@ router.post('/verify-login-otp', async (req, res) => {
       getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
     );
+
+    await logAuditEvent({
+      req,
+      tenantId: decoded.tenantId,
+      actorUserId: decoded.userId,
+      actorEmail: decoded.workEmail,
+      action: 'login.success',
+      entityType: 'auth',
+      metadata: {
+        role: decoded.role
+      }
+    });
 
     return res.status(200).json({
       success: true,

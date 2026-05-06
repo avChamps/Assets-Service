@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const nm = require('nodemailer');
 const pool = require('../config/db');
+const { logAuditEvent } = require('../utils/auditLogger');
 
 const router = express.Router();
 
@@ -423,6 +424,20 @@ router.post('/users', async (req, res) => {
       [userId, req.user.tenantId]
     );
 
+    await logAuditEvent({
+      req,
+      action: 'user.create',
+      entityType: 'user',
+      entityId: userId,
+      entityLabel: fullName,
+      metadata: {
+        source: 'tenant_admin',
+        role: role || 'user',
+        status: nextStatus,
+        workEmail
+      }
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Tenant user created successfully',
@@ -588,6 +603,19 @@ router.put('/users/:userId', async (req, res) => {
     await connection.commit();
     transactionStarted = false;
 
+    await logAuditEvent({
+      req,
+      action: 'user.update',
+      entityType: 'user',
+      entityId: req.params.userId,
+      entityLabel: updatedUser.fullName,
+      metadata: {
+        changedFields: Object.keys(req.body).filter((field) => field !== 'confirmPassword'),
+        statusAction,
+        workEmail: updatedUser.workEmail
+      }
+    });
+
     return res.status(200).json({
       success: true,
       message: 'Tenant user updated successfully',
@@ -656,6 +684,19 @@ router.delete('/users/:userId', async (req, res) => {
     await sendUserActionMail(user, 'deleted');
     await connection.commit();
     transactionStarted = false;
+
+    await logAuditEvent({
+      req,
+      action: 'user.delete',
+      entityType: 'user',
+      entityId: req.params.userId,
+      entityLabel: user.fullName,
+      metadata: {
+        workEmail: user.workEmail,
+        role: user.role,
+        status: user.status
+      }
+    });
 
     return res.status(200).json({
       success: true,

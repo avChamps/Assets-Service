@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { logAuditEvent } = require('../utils/auditLogger');
 
 const router = express.Router();
 
@@ -684,6 +685,19 @@ router.get('/export/csv', async (req, res) => {
         { header: 'Total Issues', key: 'totalIssues' }
       ];
     }
+
+    await logAuditEvent({
+      req,
+      action: 'report.download',
+      entityType: 'report',
+      entityId: flag,
+      entityLabel: `reports-${flag}.csv`,
+      metadata: {
+        flag,
+        rowCount: rows.length,
+        filters: req.query
+      }
+    });
 
     return sendCsv(res, `reports-${flag}.csv`, buildCsv(columns, rows));
   } catch (error) {

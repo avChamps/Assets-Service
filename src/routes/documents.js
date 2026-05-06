@@ -7,6 +7,7 @@ const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
 const uploadToVPS = require('../config/file-upload');
+const { logAuditEvent } = require('../utils/auditLogger');
 
 const router = express.Router();
 
@@ -282,6 +283,20 @@ router.post('/upload', async (req, res) => {
       `,
       [result.insertId, req.user.tenantId]
     );
+
+    await logAuditEvent({
+      req,
+      action: 'document.upload',
+      entityType: 'document',
+      entityId: documentId,
+      entityLabel: req.file.originalname,
+      metadata: {
+        databaseId: result.insertId,
+        type,
+        imageUrl,
+        size: req.file.size
+      }
+    });
 
     return res.status(201).json({
       success: true,

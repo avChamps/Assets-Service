@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const nm = require('nodemailer');
 const { logAuditEvent } = require('../utils/auditLogger');
+const { sendMessageToGroup } = require('../config/whatsapp');
 
 const DEFAULT_SIGNUP_SUBSCRIPTION_TYPE = 'trial';
 const DEFAULT_SIGNUP_SUBSCRIPTION_AMOUNT = 0;
@@ -166,6 +167,53 @@ async function sendForgotMail(email, otp) {
   return transporter.sendMail(mailOptions);
 }
 
+function cleanWhatsAppValue(value, fallback = 'N/A') {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  const text = String(value).trim();
+  return text || fallback;
+}
+
+function buildSignupWhatsAppMessage(payload) {
+  return [
+    '*New Signup*',
+    '',
+    `Name: ${cleanWhatsAppValue(payload.fullName)}`,
+    `Email: ${cleanWhatsAppValue(payload.workEmail)}`,
+    `Phone: ${cleanWhatsAppValue(payload.phoneNumber)}`,
+    `Company: ${cleanWhatsAppValue(payload.companyName)}`,
+    `Domain: ${cleanWhatsAppValue(payload.companyDomain)}`,
+    `Company Size: ${cleanWhatsAppValue(payload.companySize)}`,
+    `Expected Assets: ${cleanWhatsAppValue(payload.expectedAssets)}`,
+    `Subscription: ${cleanWhatsAppValue(payload.subscriptionType)}`,
+    `Tenant ID: ${cleanWhatsAppValue(payload.tenantId)}`,
+    `User ID: ${cleanWhatsAppValue(payload.userId)}`
+  ].join('\n');
+}
+
+function buildLoginWhatsAppMessage(payload) {
+  return [
+    '*User Login*',
+    '',
+    `Name: ${cleanWhatsAppValue(payload.fullName)}`,
+    `Email: ${cleanWhatsAppValue(payload.workEmail)}`,
+    `Company: ${cleanWhatsAppValue(payload.companyName)}`,
+    `Role: ${cleanWhatsAppValue(payload.role)}`,
+    `Tenant ID: ${cleanWhatsAppValue(payload.tenantId)}`,
+    `User ID: ${cleanWhatsAppValue(payload.userId)}`
+  ].join('\n');
+}
+
+async function sendWhatsAppSafely(message, logLabel) {
+  try {
+    await sendMessageToGroup(message);
+  } catch (error) {
+    console.error(`${logLabel}:`, error.message);
+  }
+}
+
 // POST /api/users/create-user
 router.post('/create-user', async (req, res) => {
   const db = pool.promise();
@@ -306,6 +354,22 @@ router.post('/create-user', async (req, res) => {
         subscriptionType: effectiveSubscriptionType
       }
     });
+
+    await sendWhatsAppSafely(
+      buildSignupWhatsAppMessage({
+        fullName,
+        workEmail,
+        phoneNumber,
+        companyName,
+        companyDomain,
+        companySize,
+        expectedAssets,
+        subscriptionType: effectiveSubscriptionType,
+        tenantId,
+        userId
+      }),
+      'Failed to send signup WhatsApp message'
+    );
 
     const token = jwt.sign(
       {
@@ -590,6 +654,18 @@ router.post('/verify-login-otp', async (req, res) => {
         role: decoded.role
       }
     });
+
+    await sendWhatsAppSafely(
+      buildLoginWhatsAppMessage({
+        fullName: decoded.fullName,
+        workEmail: decoded.workEmail,
+        companyName: decoded.companyName,
+        role: decoded.role,
+        tenantId: decoded.tenantId,
+        userId: decoded.userId
+      }),
+      'Failed to send login WhatsApp message'
+    );
 
     return res.status(200).json({
       success: true,

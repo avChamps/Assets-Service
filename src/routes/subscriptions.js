@@ -13,7 +13,7 @@ const DEFAULT_CURRENCY = 'INR';
 const DEFAULT_SUBSCRIPTION_STATUS = 'active';
 const DEFAULT_RENEWAL_DAYS = 7;
 const ALLOWED_SUBSCRIPTION_STATUSES = new Set(['active', 'expired', 'cancelled', 'pending']);
-const REQUEST_FLAGS = new Set(['request', 'requests', 'pending-requests', 'pending_requests']);
+const REQUEST_FLAGS = new Set(['pending', 'request', 'requests', 'pending-requests', 'pending_requests']);
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -485,6 +485,87 @@ function buildTenantSubscriptionFilters(query, tenantId) {
   };
 }
 
+function buildSubscriptionSummary(summaryRow, planRows) {
+  const activeSubscriptions = Number(summaryRow?.activeSubscriptions || 0);
+  const inactiveSubscriptions = Number(summaryRow?.inactiveSubscriptions || 0);
+  const dueSubscriptions = Number(summaryRow?.dueSubscriptions || 0);
+  const pendingRequests = Number(summaryRow?.pendingRequests || 0);
+
+  return {
+    active: {
+      label: 'Active Subscriptions',
+      count: activeSubscriptions
+    },
+    inactive: {
+      label: 'Inactive Subscriptions',
+      count: inactiveSubscriptions
+    },
+    due: {
+      label: 'Due Subscriptions',
+      count: dueSubscriptions
+    },
+    pending: {
+      label: 'Pending Requests',
+      count: pendingRequests
+    },
+    byPlan: planRows.map((plan) => ({
+      subscriptionType: plan.subscriptionType,
+      maxUsers: Number(plan.maxUsers || 0),
+      maxAssets: Number(plan.maxAssets || 0),
+      count: Number(plan.activeSubscriptions || 0)
+    }))
+  };
+}
+
+async function getSubscriptionSummary(db, tenantId, renewalDays = DEFAULT_RENEWAL_DAYS) {
+  const currentSubscriptionCondition = `
+    s.id = (
+      SELECT latest.id
+      FROM tenantSubscriptions latest
+      WHERE latest.tenantId = s.tenantId
+      ORDER BY latest.updatedAt DESC, latest.id DESC
+      LIMIT 1
+    )
+  `;
+  const summarySql = `
+    SELECT
+      COALESCE(SUM(CASE WHEN s.subscriptionEndDate >= CURDATE() THEN 1 ELSE 0 END), 0) AS activeSubscriptions,
+      COALESCE(SUM(CASE WHEN s.subscriptionEndDate < CURDATE() THEN 1 ELSE 0 END), 0) AS inactiveSubscriptions,
+      COALESCE(SUM(CASE WHEN s.subscriptionEndDate BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY) THEN 1 ELSE 0 END), 0) AS dueSubscriptions,
+      (
+        SELECT COUNT(*)
+        FROM contactus c
+        WHERE c.tenantId = ?
+          AND c.isActive = FALSE
+      ) AS pendingRequests
+    FROM tenantSubscriptions s
+    WHERE s.tenantId = ?
+      AND ${currentSubscriptionCondition}
+  `;
+  const planCountsSql = `
+    SELECT
+      sp.subscriptionType,
+      sp.maxUsers,
+      sp.maxAssets,
+      COALESCE(SUM(CASE WHEN s.subscriptionEndDate >= CURDATE() THEN 1 ELSE 0 END), 0) AS activeSubscriptions
+    FROM subscriptionPlans sp
+    LEFT JOIN tenantSubscriptions s
+      ON s.subscriptionType = sp.subscriptionType
+      AND s.tenantId = ?
+      AND ${currentSubscriptionCondition}
+    WHERE sp.isActive = TRUE
+    GROUP BY sp.subscriptionType, sp.maxUsers, sp.maxAssets
+    ORDER BY sp.id ASC
+  `;
+
+  const [[summaryRows], [planRows]] = await Promise.all([
+    db.query(summarySql, [renewalDays, tenantId, tenantId]),
+    db.query(planCountsSql, [tenantId])
+  ]);
+
+  return buildSubscriptionSummary(summaryRows[0], planRows);
+}
+
 router.use(authenticateToken);
 
 // GET /api/subscriptions/records?page=1&limit=10&flag=live&subscriptionType=basic
@@ -507,6 +588,7 @@ async function getTenantSubscriptions(req, res) {
     const limit = Math.min(requestedLimit, MAX_LIMIT);
     const offset = (page - 1) * limit;
     const db = pool.promise();
+    const renewalDays = Math.min(parsePositiveInteger(req.query.renewalDays, DEFAULT_RENEWAL_DAYS), 365);
     const { whereSql, params } = buildTenantSubscriptionFilters(req.query, req.user.tenantId);
 
     const countSql = `
@@ -559,9 +641,10 @@ async function getTenantSubscriptions(req, res) {
       LIMIT ? OFFSET ?
     `;
 
-    const [[countRows], [subscriptions]] = await Promise.all([
+    const [[countRows], [subscriptions], summary] = await Promise.all([
       db.query(countSql, params),
-      db.query(listSql, [...params, limit, offset])
+      db.query(listSql, [...params, limit, offset]),
+      getSubscriptionSummary(db, req.user.tenantId, renewalDays)
     ]);
     const totalRecords = countRows[0]?.total || 0;
     const totalPages = Math.ceil(totalRecords / limit);
@@ -569,6 +652,7 @@ async function getTenantSubscriptions(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Tenant subscriptions fetched successfully',
+      summary,
       data: subscriptions,
       pagination: {
         page,
@@ -964,6 +1048,7 @@ async function getSubscriptionRequests(req, res) {
     const limit = Math.min(requestedLimit, MAX_LIMIT);
     const offset = (page - 1) * limit;
     const db = pool.promise();
+    const renewalDays = Math.min(parsePositiveInteger(req.query.renewalDays, DEFAULT_RENEWAL_DAYS), 365);
     const { whereSql, params } = buildSubscriptionRequestFilters(req.query, req.user.tenantId);
 
     const countSql = `
@@ -1046,9 +1131,10 @@ async function getSubscriptionRequests(req, res) {
       LIMIT ? OFFSET ?
     `;
 
-    const [[countRows], [requests]] = await Promise.all([
+    const [[countRows], [requests], summary] = await Promise.all([
       db.query(countSql, params),
-      db.query(listSql, [...params, limit, offset])
+      db.query(listSql, [...params, limit, offset]),
+      getSubscriptionSummary(db, req.user.tenantId, renewalDays)
     ]);
     const totalRecords = countRows[0]?.total || 0;
     const totalPages = Math.ceil(totalRecords / limit);
@@ -1056,6 +1142,7 @@ async function getSubscriptionRequests(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Subscription requests fetched successfully',
+      summary,
       data: requests,
       pagination: {
         page,

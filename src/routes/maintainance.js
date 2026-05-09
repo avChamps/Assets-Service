@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { createNotificationsSafely, createNotificationSafely } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -391,6 +392,19 @@ router.post('/', async (req, res) => {
 
     await connection.commit();
 
+    await createNotificationsSafely(
+      validatedItems.map((item, index) => ({
+        tenantId: req.user.tenantId,
+        userId: item.userId,
+        title: 'Maintenance assigned',
+        message: `Maintenance was assigned for asset ${item.assetId}.`,
+        type: 'maintenance',
+        entityType: 'maintenance',
+        entityId: String(result.insertId + index),
+        createdBy: req.user.userId
+      }))
+    );
+
     return res.status(201).json({
       success: true,
       message: 'Maintainance records created successfully',
@@ -559,6 +573,15 @@ router.put('/:id', async (req, res) => {
     }
 
     const db = pool.promise();
+    const currentRecord = await getMaintenanceById(db, id, req.user.tenantId);
+
+    if (!currentRecord) {
+      return res.status(404).json({
+        success: false,
+        message: 'Maintainance record not found'
+      });
+    }
+
     const [result] = await db.query(
       `UPDATE maintainance SET ${updates.join(', ')} WHERE id = ? AND tenantId = ?`,
       [...values, id, req.user.tenantId]
@@ -572,6 +595,18 @@ router.put('/:id', async (req, res) => {
     }
 
     const record = await getMaintenanceById(db, id, req.user.tenantId);
+
+    await createNotificationSafely({
+      db,
+      tenantId: req.user.tenantId,
+      userId: record.userId,
+      title: 'Maintenance updated',
+      message: `Maintenance for asset ${record.assetId} was updated.`,
+      type: 'maintenance',
+      entityType: 'maintenance',
+      entityId: String(record.id),
+      createdBy: req.user.userId
+    });
 
     return res.status(200).json({
       success: true,

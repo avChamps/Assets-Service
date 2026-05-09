@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { logAuditEvent } = require('../utils/auditLogger');
+const { createNotificationSafely } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -161,6 +162,39 @@ function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : value;
 }
 
+function cleanText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function isValidDateText(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function getDateFilterError(query) {
+  const startDate = cleanText(query.startDate || query.fromDate);
+  const endDate = cleanText(query.endDate || query.toDate);
+
+  if (startDate && !isValidDateText(startDate)) {
+    return 'startDate must be in YYYY-MM-DD format';
+  }
+
+  if (endDate && !isValidDateText(endDate)) {
+    return 'endDate must be in YYYY-MM-DD format';
+  }
+
+  if (startDate && endDate && startDate > endDate) {
+    return 'startDate cannot be after endDate';
+  }
+
+  return null;
+}
+
 function buildAliasedColumns(tableAlias, columns, prefix) {
   return columns.map((column) => `${tableAlias}.${column} AS ${prefix}${column}`).join(', ');
 }
@@ -204,6 +238,8 @@ function buildListFilters(query, tenantId, options = {}) {
   const params = [tenantId];
   const search = normalizeString(query.search);
   const status = normalizeString(query.status);
+  const startDate = cleanText(query.startDate || query.fromDate);
+  const endDate = cleanText(query.endDate || query.toDate);
 
   if (includeStatus && !isMissing(status)) {
     conditions.push('t.status = ?');
@@ -213,6 +249,16 @@ function buildListFilters(query, tenantId, options = {}) {
   if (!isMissing(search)) {
     conditions.push(`(${SEARCH_COLUMNS.map((column) => `${column} LIKE ?`).join(' OR ')})`);
     params.push(...SEARCH_COLUMNS.map(() => `%${search}%`));
+  }
+
+  if (startDate) {
+    conditions.push('t.createdAt >= ?');
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    conditions.push('t.createdAt < DATE_ADD(?, INTERVAL 1 DAY)');
+    params.push(endDate);
   }
 
   return {
@@ -362,6 +408,18 @@ router.post('/', async (req, res) => {
       [id, req.user.tenantId, ticketNumber, assetId, subject, DEFAULT_TICKET_STATUS, req.user.userId, req.user.userId]
     );
 
+    await createNotificationSafely({
+      db,
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      title: 'Ticket created',
+      message: `Ticket ${ticketNumber} has been created for ${subject}.`,
+      type: 'ticket',
+      entityType: 'ticket',
+      entityId: id,
+      createdBy: req.user.userId
+    });
+
     const [rows] = await db.query(
       `SELECT
          ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
@@ -387,11 +445,19 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const statusValidationError = validateTicketStatus(req.query.status);
+    const dateFilterError = getDateFilterError(req.query);
 
     if (statusValidationError) {
       return res.status(400).json({
         success: false,
         message: statusValidationError
+      });
+    }
+
+    if (dateFilterError) {
+      return res.status(400).json({
+        success: false,
+        message: dateFilterError
       });
     }
 
@@ -464,11 +530,19 @@ router.get('/', async (req, res) => {
 router.get('/export/csv', async (req, res) => {
   try {
     const statusValidationError = validateTicketStatus(req.query.status);
+    const dateFilterError = getDateFilterError(req.query);
 
     if (statusValidationError) {
       return res.status(400).json({
         success: false,
         message: statusValidationError
+      });
+    }
+
+    if (dateFilterError) {
+      return res.status(400).json({
+        success: false,
+        message: dateFilterError
       });
     }
 
@@ -608,7 +682,20 @@ router.patch('/:id/status', async (req, res) => {
       });
     }
 
-    const [result] = await pool.promise().query(
+    const db = pool.promise();
+    const [currentRows] = await db.query(
+      'SELECT ticketNumber, subject, status, createdBy FROM tickts WHERE id = ? AND tenantId = ? LIMIT 1',
+      [req.params.id, req.user.tenantId]
+    );
+
+    if (!currentRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Ticket not found'
+      });
+    }
+
+    const [result] = await db.query(
       `
       UPDATE tickts
       SET status = ?, updatedBy = ?
@@ -624,7 +711,19 @@ router.patch('/:id/status', async (req, res) => {
       });
     }
 
-    const [rows] = await pool.promise().query(
+    await createNotificationSafely({
+      db,
+      tenantId: req.user.tenantId,
+      userId: currentRows[0].createdBy,
+      title: 'Ticket status updated',
+      message: `Ticket ${currentRows[0].ticketNumber} status changed from ${currentRows[0].status} to ${status}.`,
+      type: 'ticket',
+      entityType: 'ticket',
+      entityId: req.params.id,
+      createdBy: req.user.userId
+    });
+
+    const [rows] = await db.query(
       `
         SELECT
           ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},

@@ -25,7 +25,17 @@ const { startSubscriptionReminderJob } = require('./jobs/subscriptionReminders')
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://assetsystems.org',
+    'https://www.assetsystems.org'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
+app.options('*', cors());
 
 pool.getConnection((err, connection) => {
   if (err) {

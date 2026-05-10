@@ -14,6 +14,8 @@ const DEFAULT_SUBSCRIPTION_STATUS = 'active';
 const DEFAULT_RENEWAL_DAYS = 7;
 const ALLOWED_SUBSCRIPTION_STATUSES = new Set(['active', 'expired', 'cancelled', 'pending']);
 const REQUEST_FLAGS = new Set(['pending', 'request', 'requests', 'pending-requests', 'pending_requests']);
+const SUPPORT_FLAGS = new Set(['support', 'supoort']);
+const SUPPORT_REQUEST_TYPES = ['support', 'supoort'];
 
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
@@ -144,6 +146,10 @@ function getSubscriptionFlag(query) {
 
 function isRequestFlag(flag) {
   return REQUEST_FLAGS.has(flag);
+}
+
+function isSupportFlag(flag) {
+  return SUPPORT_FLAGS.has(flag);
 }
 
 function validateSubscriptionStatus(status) {
@@ -377,6 +383,13 @@ function buildSubscriptionRequestFilters(query, tenantId) {
 
   if (isRequestFlag(flag)) {
     conditions.push('c.isActive = FALSE');
+    conditions.push(`LOWER(c.subscriptionType) NOT IN (${SUPPORT_REQUEST_TYPES.map(() => '?').join(', ')})`);
+    params.push(...SUPPORT_REQUEST_TYPES);
+  }
+
+  if (isSupportFlag(flag)) {
+    conditions.push(`LOWER(c.subscriptionType) IN (${SUPPORT_REQUEST_TYPES.map(() => '?').join(', ')})`);
+    params.push(...SUPPORT_REQUEST_TYPES);
   }
 
   if (duration) {
@@ -385,26 +398,14 @@ function buildSubscriptionRequestFilters(query, tenantId) {
   }
 
   if (subscriptionType) {
-    conditions.push(`(
-      SELECT s.subscriptionType
-      FROM tenantSubscriptions s
-      WHERE s.tenantId = c.tenantId
-      ORDER BY s.updatedAt DESC, s.id DESC
-      LIMIT 1
-    ) = ?`);
+    conditions.push('c.subscriptionType = ?');
     params.push(subscriptionType);
   }
 
   if (search) {
     const searchLike = `%${search}%`;
     conditions.push(`(
-      (
-        SELECT s.subscriptionType
-        FROM tenantSubscriptions s
-        WHERE s.tenantId = c.tenantId
-        ORDER BY s.updatedAt DESC, s.id DESC
-        LIMIT 1
-      ) LIKE ?
+      c.subscriptionType LIKE ?
       OR c.fullName LIKE ?
       OR c.emailId LIKE ?
       OR c.mobileNumber LIKE ?
@@ -490,6 +491,7 @@ function buildSubscriptionSummary(summaryRow, planRows) {
   const inactiveSubscriptions = Number(summaryRow?.inactiveSubscriptions || 0);
   const dueSubscriptions = Number(summaryRow?.dueSubscriptions || 0);
   const pendingRequests = Number(summaryRow?.pendingRequests || 0);
+  const supportTickets = Number(summaryRow?.supportTickets || 0);
 
   return {
     active: {
@@ -507,6 +509,10 @@ function buildSubscriptionSummary(summaryRow, planRows) {
     pending: {
       label: 'Pending Requests',
       count: pendingRequests
+    },
+    support: {
+      label: 'Support Tickets',
+      count: supportTickets
     },
     byPlan: planRows.map((plan) => ({
       subscriptionType: plan.subscriptionType,
@@ -537,7 +543,13 @@ async function getSubscriptionSummary(db, tenantId, renewalDays = DEFAULT_RENEWA
         FROM contactus c
         WHERE c.tenantId = ?
           AND c.isActive = FALSE
-      ) AS pendingRequests
+      ) AS pendingRequests,
+      (
+        SELECT COUNT(*)
+        FROM contactus c
+        WHERE c.tenantId = ?
+          AND LOWER(c.subscriptionType) IN (${SUPPORT_REQUEST_TYPES.map(() => '?').join(', ')})
+      ) AS supportTickets
     FROM tenantSubscriptions s
     WHERE s.tenantId = ?
       AND ${currentSubscriptionCondition}
@@ -559,7 +571,7 @@ async function getSubscriptionSummary(db, tenantId, renewalDays = DEFAULT_RENEWA
   `;
 
   const [[summaryRows], [planRows]] = await Promise.all([
-    db.query(summarySql, [renewalDays, tenantId, tenantId]),
+    db.query(summarySql, [renewalDays, tenantId, tenantId, ...SUPPORT_REQUEST_TYPES, tenantId]),
     db.query(planCountsSql, [tenantId])
   ]);
 
@@ -573,7 +585,7 @@ async function getTenantSubscriptions(req, res) {
   try {
     const flag = getSubscriptionFlag(req.query);
 
-    if (isRequestFlag(flag)) {
+    if (isRequestFlag(flag) || isSupportFlag(flag)) {
       return getSubscriptionRequests(req, res);
     }
 
@@ -616,6 +628,7 @@ async function getTenantSubscriptions(req, res) {
         s.updatedBy,
         updatedUser.fullName AS updatedByName,
         s.createdAt,
+        DATE_FORMAT(s.createdAt, '%Y-%m-%d') AS createdDate,
         s.updatedAt,
         (
           SELECT COUNT(*)
@@ -1066,6 +1079,7 @@ async function getSubscriptionRequests(req, res) {
         COALESCE(u.fullName, c.userId) AS requestedBy,
         t.companyName AS tenantName,
         c.duration,
+        c.subscriptionType AS userrequestType,
         (
           SELECT s.subscriptionType
           FROM tenantSubscriptions s
@@ -1080,6 +1094,7 @@ async function getSubscriptionRequests(req, res) {
         c.message,
         c.isActive,
         CASE WHEN c.isActive = TRUE THEN 'closed' ELSE 'pending' END AS requestStatus,
+        DATE_FORMAT(c.createdDate, '%Y-%m-%d') AS createdDate,
         (
           SELECT s.subscriptionStartDate
           FROM tenantSubscriptions s

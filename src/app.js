@@ -25,17 +25,47 @@ const { startSubscriptionReminderJob } = require('./jobs/subscriptionReminders')
 const cors = require('cors');
 
 const app = express();
-app.use(cors({
-  origin: [
-    'https://assetsystems.org',
-    'https://www.assetsystems.org'
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
 
-app.options('*', cors());
+const parseCsvEnv = (value) =>
+  (value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const allowedOrigins = [
+  'https://assetsystems.org',
+  'https://www.assetsystems.org',
+  'https://api.assetsystems.org',
+  'http://localhost:3000',
+  'http://localhost:5000',
+  'http://localhost:4200',
+  ...parseCsvEnv(process.env.CORS_ORIGINS)
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Accept',
+    'Authorization',
+    'Content-Type',
+    'Origin',
+    'X-Requested-With',
+    'X-Tenant-ID',
+    'X-Tenant-Id',
+    'X-TenantId'
+  ],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 pool.getConnection((err, connection) => {
   if (err) {

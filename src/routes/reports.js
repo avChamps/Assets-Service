@@ -115,6 +115,32 @@ function numberValue(row, key) {
   return Number(row?.[key] || 0);
 }
 
+async function getTenantAmcValue(db, tenantId) {
+  const [columns] = await db.query('SHOW COLUMNS FROM tenants LIKE ?', ['amcValue']);
+
+  if (!columns.length) {
+    return 0;
+  }
+
+  const [rows] = await db.query(
+    'SELECT COALESCE(amcValue, 0) AS amcValue FROM tenants WHERE tenantId = ? LIMIT 1',
+    [tenantId]
+  );
+
+  return numberValue(rows[0], 'amcValue');
+}
+
+function calculateAmcValue(totalAssetValue, amcValue) {
+  const total = Number(totalAssetValue || 0);
+  const percentage = Number(amcValue || 0);
+
+  if (!Number.isFinite(total) || !Number.isFinite(percentage)) {
+    return 0;
+  }
+
+  return Number(((total * percentage) / 100).toFixed(2));
+}
+
 function percentageValue(value, total) {
   const numericValue = Number(value || 0);
   const numericTotal = Number(total || 0);
@@ -560,43 +586,46 @@ router.get('/export/csv', async (req, res) => {
     let rows = [];
 
     if (flag === 'summary') {
-      const [assetRows] = await db.query(
-        `
-          SELECT
-            COUNT(*) AS totalAssets,
-            COUNT(DISTINCT NULLIF(TRIM(a.roomName), '')) AS totalRooms,
-            COALESCE(SUM(COALESCE(a.quantity, 0) * COALESCE(a.unitPrice, 0)), 0) AS investment,
-            SUM(CASE WHEN ${warrantyDateSql} >= CURDATE() THEN 1 ELSE 0 END) AS underWarranty,
-            SUM(CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END) AS outOfWarranty,
-            SUM(
-              CASE
-                WHEN ${warrantyDateSql} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)
-                THEN 1 ELSE 0
-              END
-            ) AS expiringWarranties
-          FROM assets a
-          ${assetFilters.whereSql}
-        `,
-        [alertWindowDays, ...assetFilters.params]
-      );
-      const [ticketRows] = await db.query(
-        `
-          SELECT COUNT(*) AS totalTickets
-          FROM tickts t
-          LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
-          ${ticketScopedFilters.whereSql}
-        `,
-        ticketScopedFilters.params
-      );
-      const [retiredRows] = await db.query(
-        `
-          SELECT COUNT(*) AS hardwareRecycle
-          FROM retiredInvertory r
-          LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
-          ${retiredScopedFilters.whereSql}
-        `,
-        retiredScopedFilters.params
-      );
+      const [[assetRows], [ticketRows], [retiredRows], amcValue] = await Promise.all([
+        db.query(
+          `
+            SELECT
+              COUNT(*) AS totalAssets,
+              COUNT(DISTINCT NULLIF(TRIM(a.roomName), '')) AS totalRooms,
+              COALESCE(SUM(COALESCE(a.quantity, 0) * COALESCE(a.unitPrice, 0)), 0) AS investment,
+              SUM(CASE WHEN ${warrantyDateSql} >= CURDATE() THEN 1 ELSE 0 END) AS underWarranty,
+              SUM(CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END) AS outOfWarranty,
+              SUM(
+                CASE
+                  WHEN ${warrantyDateSql} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)
+                  THEN 1 ELSE 0
+                END
+              ) AS expiringWarranties
+            FROM assets a
+            ${assetFilters.whereSql}
+          `,
+          [alertWindowDays, ...assetFilters.params]
+        ),
+        db.query(
+          `
+            SELECT COUNT(*) AS totalTickets
+            FROM tickts t
+            LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
+            ${ticketScopedFilters.whereSql}
+          `,
+          ticketScopedFilters.params
+        ),
+        db.query(
+          `
+            SELECT COUNT(*) AS hardwareRecycle
+            FROM retiredInvertory r
+            LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
+            ${retiredScopedFilters.whereSql}
+          `,
+          retiredScopedFilters.params
+        ),
+        getTenantAmcValue(db, tenantId)
+      ]);
       columns = [
         { header: 'Metric', key: 'metric' },
         { header: 'Value', key: 'value' }
@@ -608,7 +637,7 @@ router.get('/export/csv', async (req, res) => {
         { metric: 'Under Warranty', value: numberValue(assetRows[0], 'underWarranty') },
         { metric: 'Out Of Warranty', value: numberValue(assetRows[0], 'outOfWarranty') },
         { metric: 'Expiring Warranties', value: numberValue(assetRows[0], 'expiringWarranties') },
-        { metric: 'AMC Value', value: 0 },
+        { metric: 'AMC Value', value: calculateAmcValue(numberValue(assetRows[0], 'investment'), amcValue) },
         { metric: 'Tickets', value: numberValue(ticketRows[0], 'totalTickets') },
         { metric: 'Hardware Recycle', value: numberValue(retiredRows[0], 'hardwareRecycle') }
       ];
@@ -926,7 +955,8 @@ router.get('/', async (req, res) => {
       [locationRows],
       [buildingRows],
       [filterRoomRows],
-      [dateRangeRows]
+      [dateRangeRows],
+      amcValue
     ] = await Promise.all([
       db.query(totalsSql, [alertWindowDays, ...assetFilters.params]),
       db.query(ticketsSql, ticketScopedFilters.params),
@@ -940,7 +970,8 @@ router.get('/', async (req, res) => {
       db.query(locationsSql, locationOptionFilters.params),
       db.query(buildingsSql, buildingOptionFilters.params),
       db.query(roomsSql, roomOptionFilters.params),
-      db.query(dateRangeSql, dateRangeFilters.params)
+      db.query(dateRangeSql, dateRangeFilters.params),
+      getTenantAmcValue(db, tenantId)
     ]);
 
     const totals = {
@@ -950,7 +981,7 @@ router.get('/', async (req, res) => {
       underWarranty: numberValue(totalRows[0], 'underWarranty'),
       outOfWarranty: numberValue(totalRows[0], 'outOfWarranty'),
       expiringWarranties: numberValue(totalRows[0], 'expiringWarranties'),
-      amcValue: 0,
+      amcValue: calculateAmcValue(numberValue(totalRows[0], 'investment'), amcValue),
       hardwareRecycle: numberValue(retiredRows[0], 'hardwareRecycle'),
       totalTickets: numberValue(ticketRows[0], 'totalTickets'),
       openedTickets: numberValue(ticketRows[0], 'openedTickets'),
@@ -958,7 +989,6 @@ router.get('/', async (req, res) => {
       closedTickets: numberValue(ticketRows[0], 'closedTickets')
     };
     const totalRoomCapacity = roomRows.reduce((sum, row) => sum + numberValue(row, 'capacity'), 0);
-    const totalInvestmentAndAmc = totals.investment + totals.amcValue;
     const totalIssuesInTopRooms = issueRows.reduce((sum, row) => sum + numberValue(row, 'totalIssues'), 0);
     const totalHighValue = highValueRows.reduce((sum, row) => sum + numberValue(row, 'totalValue'), 0);
 
@@ -986,12 +1016,12 @@ router.get('/', async (req, res) => {
           {
             name: 'Investment',
             value: totals.investment,
-            percentage: percentageValue(totals.investment, totalInvestmentAndAmc)
+            percentage: percentageValue(totals.investment, totals.investment)
           },
           {
             name: 'AMC',
             value: totals.amcValue,
-            percentage: percentageValue(totals.amcValue, totalInvestmentAndAmc)
+            percentage: percentageValue(totals.amcValue, totals.investment)
           }
         ]
       },

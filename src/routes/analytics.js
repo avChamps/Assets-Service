@@ -60,6 +60,32 @@ function numberValue(row, key) {
   return Number(row?.[key] || 0);
 }
 
+async function getTenantAmcValue(db, tenantId) {
+  const [columns] = await db.query('SHOW COLUMNS FROM tenants LIKE ?', ['amcValue']);
+
+  if (!columns.length) {
+    return 0;
+  }
+
+  const [rows] = await db.query(
+    'SELECT COALESCE(amcValue, 0) AS amcValue FROM tenants WHERE tenantId = ? LIMIT 1',
+    [tenantId]
+  );
+
+  return numberValue(rows[0], 'amcValue');
+}
+
+function calculateAmcValue(totalAssetValue, amcValue) {
+  const total = Number(totalAssetValue || 0);
+  const percentage = Number(amcValue || 0);
+
+  if (!Number.isFinite(total) || !Number.isFinite(percentage)) {
+    return 0;
+  }
+
+  return Number(((total * percentage) / 100).toFixed(2));
+}
+
 function buildCards(stats) {
   return {
     totalAvAssets: [
@@ -230,11 +256,12 @@ router.get('/', async (req, res) => {
       WHERE tenantId = ?
     `;
 
-    const [[assetRows], [userRows], [ticketRows], [retiredRows]] = await Promise.all([
+    const [[assetRows], [userRows], [ticketRows], [retiredRows], amcValue] = await Promise.all([
       db.query(assetsSql, [alertWindowDays, tenantId]),
       db.query(usersSql, [tenantId]),
       db.query(ticketsSql, [tenantId]),
-      db.query(retiredInventorySql, [tenantId])
+      db.query(retiredInventorySql, [tenantId]),
+      getTenantAmcValue(db, tenantId)
     ]);
 
     const stats = {
@@ -246,7 +273,7 @@ router.get('/', async (req, res) => {
       },
       assetValue: {
         investment: numberValue(assetRows[0], 'investment'),
-        amcValue: 0,
+        amcValue: calculateAmcValue(numberValue(assetRows[0], 'investment'), amcValue),
         outOfWarranty: numberValue(assetRows[0], 'outOfWarranty'),
         hardwareRecycle: numberValue(retiredRows[0], 'hardwareRecycle')
       },

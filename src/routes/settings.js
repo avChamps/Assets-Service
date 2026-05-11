@@ -148,6 +148,39 @@ function addUpdate(updates, values, columns, columnName, value) {
   values.push(cleanText(value));
 }
 
+function addNumberUpdate(updates, values, columns, columnName, value) {
+  if (!columns.has(columnName) || value === undefined) {
+    return true;
+  }
+
+  if (value === null || String(value).trim() === '') {
+    updates.push(`${columnName} = ?`);
+    values.push(null);
+    return true;
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) {
+    return false;
+  }
+
+  updates.push(`${columnName} = ?`);
+  values.push(number);
+  return true;
+}
+
+function calculateAmcValue(totalAssetValue, amcValue) {
+  const total = Number(totalAssetValue || 0);
+  const percentage = Number(amcValue || 0);
+
+  if (!Number.isFinite(total) || !Number.isFinite(percentage)) {
+    return 0;
+  }
+
+  return Number(((total * percentage) / 100).toFixed(2));
+}
+
 router.use(authenticateToken);
 
 // GET /api/settings
@@ -174,6 +207,7 @@ router.get('/', async (req, res) => {
       selectColumn(tenantColumns, 't', 'companyDomain'),
       selectColumn(tenantColumns, 't', 'companySize'),
       selectColumn(tenantColumns, 't', 'expectedAssets'),
+      selectColumn(tenantColumns, 't', 'amcValue'),
       selectColumn(tenantColumns, 't', 'subscriptionType', 'tenantSubscriptionType'),
       selectFirstColumn(tenantColumns, 't', ['addressLine1', 'address1', 'address'], 'addressLine1'),
       selectFirstColumn(tenantColumns, 't', ['addressLine2', 'address2'], 'addressLine2'),
@@ -228,7 +262,8 @@ router.get('/', async (req, res) => {
       SELECT
         COUNT(*) AS totalAssets,
         COUNT(DISTINCT NULLIF(TRIM(country), '')) AS totalRegions,
-        COUNT(DISTINCT NULLIF(TRIM(location), '')) AS totalLocations
+        COUNT(DISTINCT NULLIF(TRIM(location), '')) AS totalLocations,
+        COALESCE(SUM(COALESCE(quantity, 0) * COALESCE(unitPrice, 0)), 0) AS totalAssetValue
       FROM assets
       WHERE tenantId = ? AND isActive = TRUE
     `;
@@ -271,10 +306,15 @@ router.get('/', async (req, res) => {
           companySize: profile.companySize || null,
           expectedAssets: profile.expectedAssets || null
         },
+        budget: {
+          amcValue: profile.amcValue === null ? null : Number(profile.amcValue || 0),
+          amcCalculatedValue: calculateAmcValue(totals.totalAssetValue, profile.amcValue)
+        },
         assetsSummary: {
           totalAssets: Number(totals.totalAssets || 0),
           totalRegions: Number(totals.totalRegions || 0),
-          totalLocations: Number(totals.totalLocations || 0)
+          totalLocations: Number(totals.totalLocations || 0),
+          totalAssetValue: Number(totals.totalAssetValue || 0)
         },
         regions: mapCountRows(regionRows, 'region'),
         locations: mapCountRows(locationRows, 'location')
@@ -299,6 +339,7 @@ router.put('/', async (req, res) => {
     const aboutCompany = body.aboutCompany || {};
     const personalData = body.personalData || {};
     const subscriptionManagement = body.subscriptionManagement || {};
+    const budget = body.budget || {};
 
     const fullName = firstDefined(personalData.fullName, aboutCompany.contactName);
     const workEmail = firstDefined(personalData.workEmail, aboutCompany.emailId);
@@ -345,6 +386,14 @@ router.put('/', async (req, res) => {
     addUpdate(tenantUpdates, tenantValues, tenantColumns, 'address', aboutCompany.addressLine1);
     addUpdate(tenantUpdates, tenantValues, tenantColumns, 'addressLine2', aboutCompany.addressLine2);
     addUpdate(tenantUpdates, tenantValues, tenantColumns, 'address2', aboutCompany.addressLine2);
+    const validAmcValue = addNumberUpdate(tenantUpdates, tenantValues, tenantColumns, 'amcValue', budget.amcValue);
+
+    if (!validAmcValue) {
+      return res.status(400).json({
+        success: false,
+        message: 'budget.amcValue must be a non-negative number'
+      });
+    }
 
     if (!userUpdates.length && !tenantUpdates.length) {
       return res.status(400).json({

@@ -53,6 +53,15 @@ const BASIC_ASSET_EXPORT_COLUMNS = [
   { header: 'Created At', key: 'createdAt' }
 ];
 
+function getPaxNameSql(column = 'pax') {
+  return `
+    CASE
+      WHEN COALESCE(${column}, 0) > 0 THEN CONCAT(COALESCE(${column}, 0), ' Pax')
+      ELSE 'Not Specified'
+    END
+  `;
+}
+
 function getJwtSecret() {
   if (!process.env.JWT_SECRET) {
     throw new Error('JWT_SECRET is not configured');
@@ -106,6 +115,17 @@ function numberValue(row, key) {
   return Number(row?.[key] || 0);
 }
 
+function percentageValue(value, total) {
+  const numericValue = Number(value || 0);
+  const numericTotal = Number(total || 0);
+
+  if (!numericTotal) {
+    return 0;
+  }
+
+  return Number(((numericValue / numericTotal) * 100).toFixed(2));
+}
+
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : value;
 }
@@ -152,10 +172,15 @@ function getWarrantyDateSql(alias = 'a') {
   `;
 }
 
-function mapNamedValueRows(rows, nameKey, valueKey) {
+function mapNamedValueRows(rows, nameKey, valueKey, total = null) {
+  const effectiveTotal = total === null
+    ? rows.reduce((sum, row) => sum + numberValue(row, valueKey), 0)
+    : Number(total || 0);
+
   return rows.map((row) => ({
     name: row[nameKey] || 'Not Specified',
-    value: numberValue(row, valueKey)
+    value: numberValue(row, valueKey),
+    percentage: percentageValue(numberValue(row, valueKey), effectiveTotal)
   }));
 }
 
@@ -428,7 +453,23 @@ function appendAssetExportIdFilter(flag, id, whereSql, params, alias = 'a') {
 
   const prefix = alias ? `${alias}.` : '';
 
-  if (flag === 'roomCapacity' || flag === 'topRoomsWithIssues' || flag === 'topRoomsHighValue') {
+  if (flag === 'roomCapacity') {
+    const paxValue = Number.parseInt(String(normalizedId).replace(/[^0-9-]/g, ''), 10);
+
+    if (!Number.isInteger(paxValue)) {
+      return {
+        whereSql: `${whereSql} AND COALESCE(${prefix}pax, 0) = 0`,
+        params
+      };
+    }
+
+    return {
+      whereSql: `${whereSql} AND COALESCE(${prefix}pax, 0) = ?`,
+      params: [...params, paxValue]
+    };
+  }
+
+  if (flag === 'topRoomsWithIssues' || flag === 'topRoomsHighValue') {
     return {
       whereSql: `${whereSql} AND COALESCE(NULLIF(TRIM(${prefix}roomName), ''), 'Not Specified') = ?`,
       params: [...params, normalizedId]
@@ -726,6 +767,7 @@ router.get('/', async (req, res) => {
     const retiredAssetFilters = buildAssetFilters(req.query, tenantId, 'a', { includeActive: false });
     const retiredScopedFilters = mergeWhereClauses(retiredFilters, retiredAssetFilters);
     const ticketJoinDateFilters = buildDateJoinFilters(req.query, 't');
+    const paxNameSql = getPaxNameSql('roomPax');
     const countryOptionFilters = buildFilterOptionWhere(req.query, tenantId);
     const locationOptionFilters = buildFilterOptionWhere(req.query, tenantId, '', ['country']);
     const buildingOptionFilters = buildFilterOptionWhere(req.query, tenantId, '', ['country', 'location']);
@@ -766,14 +808,25 @@ router.get('/', async (req, res) => {
     `;
     const roomCapacitySql = `
       SELECT
-        COALESCE(NULLIF(TRIM(roomName), ''), 'Not Specified') AS name,
-        COUNT(*) AS assets,
-        COALESCE(SUM(COALESCE(quantity, 0)), 0) AS quantity,
-        COALESCE(MAX(pax), 0) AS capacity
-      FROM assets
-      ${unaliasedAssetFilters.whereSql}
-      GROUP BY COALESCE(NULLIF(TRIM(roomName), ''), 'Not Specified')
-      ORDER BY assets DESC, name ASC
+        ${paxNameSql} AS name,
+        ${paxNameSql} AS paxName,
+        roomPax AS pax,
+        COUNT(*) AS rooms,
+        COALESCE(SUM(assets), 0) AS assets,
+        COALESCE(SUM(quantity), 0) AS quantity,
+        COALESCE(SUM(roomPax), 0) AS capacity
+      FROM (
+        SELECT
+          COALESCE(NULLIF(TRIM(roomName), ''), 'Not Specified') AS roomName,
+          COUNT(*) AS assets,
+          COALESCE(SUM(COALESCE(quantity, 0)), 0) AS quantity,
+          COALESCE(MAX(pax), 0) AS roomPax
+        FROM assets
+        ${unaliasedAssetFilters.whereSql}
+        GROUP BY COALESCE(NULLIF(TRIM(roomName), ''), 'Not Specified')
+      ) roomCapacityByRoom
+      GROUP BY roomPax
+      ORDER BY capacity DESC, rooms DESC, name ASC
     `;
     const deviceTypeSql = `
       SELECT
@@ -904,38 +957,63 @@ router.get('/', async (req, res) => {
       pendingTickets: numberValue(ticketRows[0], 'pendingTickets'),
       closedTickets: numberValue(ticketRows[0], 'closedTickets')
     };
+    const totalRoomCapacity = roomRows.reduce((sum, row) => sum + numberValue(row, 'capacity'), 0);
+    const totalInvestmentAndAmc = totals.investment + totals.amcValue;
+    const totalIssuesInTopRooms = issueRows.reduce((sum, row) => sum + numberValue(row, 'totalIssues'), 0);
+    const totalHighValue = highValueRows.reduce((sum, row) => sum + numberValue(row, 'totalValue'), 0);
 
     const charts = {
       roomCapacity: {
         totalRooms: totals.totalRooms,
+        totalCapacity: totalRoomCapacity,
         data: roomRows.map((row) => ({
           name: row.name,
+          paxName: row.paxName || row.name,
+          pax: numberValue(row, 'pax'),
+          rooms: numberValue(row, 'rooms'),
           assets: numberValue(row, 'assets'),
           quantity: numberValue(row, 'quantity'),
-          capacity: numberValue(row, 'capacity')
+          capacity: numberValue(row, 'capacity'),
+          percentage: percentageValue(numberValue(row, 'capacity'), totalRoomCapacity)
         }))
       },
       deviceType: {
         totalAssets: totals.totalAssets,
-        data: mapNamedValueRows(deviceRows, 'name', 'value')
+        data: mapNamedValueRows(deviceRows, 'name', 'value', totals.totalAssets)
       },
       investmentAndAmc: {
         data: [
-          { name: 'Investment', value: totals.investment },
-          { name: 'AMC', value: totals.amcValue }
+          {
+            name: 'Investment',
+            value: totals.investment,
+            percentage: percentageValue(totals.investment, totalInvestmentAndAmc)
+          },
+          {
+            name: 'AMC',
+            value: totals.amcValue,
+            percentage: percentageValue(totals.amcValue, totalInvestmentAndAmc)
+          }
         ]
       },
       tickets: {
         totalTickets: totals.totalTickets,
-        data: mapNamedValueRows(ticketStatusRows, 'name', 'value')
+        data: mapNamedValueRows(ticketStatusRows, 'name', 'value', totals.totalTickets)
       },
       outOfWarranty: {
         totalDevices: totals.outOfWarranty,
-        data: [{ name: 'Out of Warranty', value: totals.outOfWarranty }]
+        data: [{
+          name: 'Out of Warranty',
+          value: totals.outOfWarranty,
+          percentage: percentageValue(totals.outOfWarranty, totals.totalAssets)
+        }]
       },
       hardwareRecycle: {
         totalDevices: totals.hardwareRecycle,
-        data: [{ name: 'Hardware Recycle', value: totals.hardwareRecycle }]
+        data: [{
+          name: 'Hardware Recycle',
+          value: totals.hardwareRecycle,
+          percentage: percentageValue(totals.hardwareRecycle, totals.totalAssets)
+        }]
       },
       topRoomsWithIssues: {
         data: issueRows.map((row) => ({
@@ -943,7 +1021,8 @@ router.get('/', async (req, res) => {
           maintenance: numberValue(row, 'maintenance'),
           tickets: numberValue(row, 'tickets'),
           warranty: numberValue(row, 'warranty'),
-          totalIssues: numberValue(row, 'totalIssues')
+          totalIssues: numberValue(row, 'totalIssues'),
+          percentage: percentageValue(numberValue(row, 'totalIssues'), totalIssuesInTopRooms)
         }))
       },
       topRoomsHighValue: {
@@ -952,7 +1031,8 @@ router.get('/', async (req, res) => {
           video: numberValue(row, 'video'),
           audio: numberValue(row, 'audio'),
           other: numberValue(row, 'other'),
-          totalValue: numberValue(row, 'totalValue')
+          totalValue: numberValue(row, 'totalValue'),
+          percentage: percentageValue(numberValue(row, 'totalValue'), totalHighValue)
         }))
       }
     };

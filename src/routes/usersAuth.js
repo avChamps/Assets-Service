@@ -20,6 +20,10 @@ function getJwtSecret() {
   return process.env.JWT_SECRET;
 }
 
+function toBoolean(value) {
+  return value === true || value === 1 || value === '1';
+}
+
 function getEmailConfig() {
   const config = {
     host: process.env.SMTP_HOST,
@@ -265,6 +269,7 @@ router.post('/create-user', async (req, res) => {
     const subscriptionId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
     const effectiveSubscriptionType = subscriptionType || DEFAULT_SIGNUP_SUBSCRIPTION_TYPE;
+    let isAdmin = false;
 
     connection = await db.getConnection();
     await connection.beginTransaction();
@@ -307,6 +312,12 @@ router.post('/create-user', async (req, res) => {
       userId,
       userId
     ]);
+
+    const [createdUserRows] = await connection.query(
+      'SELECT isAdmin FROM users WHERE userId = ? LIMIT 1',
+      [userId]
+    );
+    isAdmin = toBoolean(createdUserRows[0]?.isAdmin);
 
     const insertSubscriptionSql = `
       INSERT INTO tenantSubscriptions (
@@ -377,6 +388,7 @@ router.post('/create-user', async (req, res) => {
         tenantId,
         workEmail,
         role: 'admin',
+        isAdmin,
         companyName,
         subscriptionType: effectiveSubscriptionType
       },
@@ -394,6 +406,7 @@ router.post('/create-user', async (req, res) => {
         fullName,
         workEmail,
         companyName,
+        isAdmin,
         subscriptionType: effectiveSubscriptionType,
         jobTitle,
         location: location || null
@@ -443,6 +456,7 @@ router.post('/login-generate-otp', async (req, res) => {
         u.workEmail,
         u.password,
         u.role,
+        u.isAdmin,
         u.status,
         u.jobTitle,
         u.location,
@@ -536,6 +550,7 @@ router.post('/login-generate-otp', async (req, res) => {
         fullName: user.fullName,
         workEmail: user.workEmail,
         role: user.role,
+        isAdmin: toBoolean(user.isAdmin),
         companyName: user.companyName || null,
         companyDomain: user.companyDomain || null,
         companySize: user.companySize || null,
@@ -572,6 +587,7 @@ router.post('/login-generate-otp', async (req, res) => {
         fullName: user.fullName,
         workEmail: user.workEmail,
         role: user.role,
+        isAdmin: toBoolean(user.isAdmin),
         companyName: user.companyName || null,
         companyDomain: user.companyDomain || null,
         companySize: user.companySize || null,
@@ -637,7 +653,8 @@ router.post('/verify-login-otp', async (req, res) => {
         userId: decoded.userId,
         tenantId: decoded.tenantId,
         workEmail: decoded.workEmail,
-        role: decoded.role
+        role: decoded.role,
+        isAdmin: toBoolean(decoded.isAdmin)
       },
       getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
@@ -677,6 +694,7 @@ router.post('/verify-login-otp', async (req, res) => {
         fullName: decoded.fullName,
         workEmail: decoded.workEmail,
         role: decoded.role,
+        isAdmin: toBoolean(decoded.isAdmin),
         companyName: decoded.companyName,
         companyDomain: decoded.companyDomain,
         companySize: decoded.companySize,

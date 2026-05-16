@@ -69,6 +69,7 @@ async function sendTemporaryPasswordMail(email, fullName, temporaryPassword) {
   const safeEmail = escapeHtml(email);
   const safeFullName = escapeHtml(fullName || 'User');
   const safeTemporaryPassword = escapeHtml(temporaryPassword);
+  const loginUrl = escapeHtml(process.env.APP_LOGIN_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/login');
   const transporter = nm.createTransport({
     host: emailConfig.host,
     port: emailConfig.port,
@@ -85,36 +86,58 @@ async function sendTemporaryPasswordMail(email, fullName, temporaryPassword) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Your AV Champs Account</title>
+      <title>Account Created Successfully</title>
     </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f7f6;">
-      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6;">
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
         <tr>
-          <td align="center" style="padding: 40px 16px;">
-            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #dfe3e8; border-radius: 12px;">
+          <td align="center" style="padding: 12px 8px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #d5dbe5;">
               <tr>
-                <td style="padding: 36px 40px 12px 40px;">
-                  <h1 style="margin: 0; font-size: 28px; color: #1c293b;">Your account has been created</h1>
+                <td align="center" style="background-color: #3f5ed7; padding: 54px 24px 48px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="width: 82px; height: 1px; background-color: #ffffff; opacity: 0.9; margin: 0 auto 12px;"></div>
+                  <div style="font-size: 24px; line-height: 1; margin-bottom: 14px;">&#128279;</div>
+                  <p style="margin: 0 0 14px; font-size: 11px; line-height: 1.2; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase;">Welcome Onboard!</p>
+                  <h1 style="margin: 0; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 34px; line-height: 1.12; font-weight: 700; color: #ffffff;">Account Created Successfully</h1>
                 </td>
               </tr>
               <tr>
-                <td style="padding: 12px 40px 28px 40px; color: #555555; font-size: 16px; line-height: 1.6;">
+                <td style="padding: 52px 48px 44px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.85; font-weight: 400;">
                   <p style="margin: 0 0 18px;">Hello ${safeFullName},</p>
-                  <p style="margin: 0 0 18px;">Your AV Champs account is ready. Use the credentials below to sign in:</p>
-                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; border-radius: 8px;">
+                  <p style="margin: 0 0 24px;">Your account has been successfully created. You can now log in to the platform using the credentials below:</p>
+
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border: 1px dashed #1f5cff; border-radius: 4px; margin: 0 0 26px;">
                     <tr>
-                      <td style="padding: 18px; color: #1c293b;">
-                        <p style="margin: 0 0 10px;"><strong>Username:</strong> ${safeEmail}</p>
-                        <p style="margin: 0;"><strong>Temporary password:</strong> ${safeTemporaryPassword}</p>
+                      <td style="padding: 18px 20px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.75;">
+                        <p style="margin: 0 0 12px;">Email ID:<br><span style="color: #1f5cff; font-weight: 700;">${safeEmail}</span></p>
+                        <p style="margin: 0;">Temporary Password:<br><span style="color: #1f5cff; font-weight: 700;">${safeTemporaryPassword}</span></p>
                       </td>
                     </tr>
                   </table>
-                  <p style="margin: 22px 0 0;">Please reset your password after signing in to keep your account secure.</p>
+
+                  <p style="margin: 0 0 16px;">To access your account, please click the button below:</p>
+                  <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 28px;">
+                    <tr>
+                      <td align="center" style="background-color: #3f5ed7; border-radius: 3px;">
+                        <a href="${loginUrl}" style="display: inline-block; padding: 12px 26px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; line-height: 1; font-weight: 800; text-decoration: none;">&#128073;&nbsp; Login to Your Account</a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 18px; color: #ff2f2f; font-size: 11px; line-height: 1.8;"><strong>Note:</strong> For security reasons, we strongly recommend that you change your password immediately after your first login.</p>
+                  <p style="margin: 0 0 34px; color: #55657a; font-size: 12px; font-style: italic;">If you did not expect this email, please contact your administrator.</p>
+                  <p style="margin: 0;">Regards,<br><strong>Team</strong></p>
                 </td>
               </tr>
               <tr>
-                <td style="padding: 0 40px 32px 40px; color: #555555; font-size: 14px;">
-                  <p style="margin: 0;"><strong>Sincerely,</strong><br>The AV Champs Team</p>
+                <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
+                  <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
+                  <p style="margin: 0;">+91-9966416417<br>support@assetsystems.org</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  &copy; 2026 AV Champs LLP. All Rights Reserved.
                 </td>
               </tr>
             </table>
@@ -136,21 +159,44 @@ async function sendTemporaryPasswordMail(email, fullName, temporaryPassword) {
 async function sendUserActionMail(user, action) {
   const emailConfig = getEmailConfig();
   const safeFullName = escapeHtml(user.fullName || 'User');
+  const safeEmail = escapeHtml(user.workEmail || '');
+  const dashboardUrl = escapeHtml(process.env.APP_DASHBOARD_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/dashboard');
   const actionMessages = {
     enabled: {
       subject: 'Your AV Champs account has been enabled',
-      title: 'Your account has been enabled',
-      message: 'Your AV Champs account is now active. You can sign in and continue using the application.'
+      eyebrow: 'Access Restored',
+      title: 'Account Enabled Successfully',
+      icon: '&#9989;',
+      statusLabel: 'Active',
+      statusColor: '#0a8f3c',
+      message: 'Your AV Champs account has been enabled by your administrator. You can now access the platform and continue using your workspace.',
+      note: 'If you did not expect this change, please contact your administrator immediately.',
+      buttonText: '&#128073;&nbsp; Access Your Dashboard',
+      buttonUrl: dashboardUrl
     },
     disabled: {
       subject: 'Your AV Champs account has been disabled',
-      title: 'Your account has been disabled',
-      message: 'Your AV Champs account has been disabled. Please contact your administrator if you need access again.'
+      eyebrow: 'Access Updated',
+      title: 'Account Disabled',
+      icon: '&#9888;',
+      statusLabel: 'Disabled',
+      statusColor: '#d92d20',
+      message: 'Your AV Champs account has been disabled by your administrator. You will not be able to access the platform until access is restored.',
+      note: 'If you need access again or believe this was unexpected, please contact your administrator.',
+      buttonText: null,
+      buttonUrl: null
     },
     deleted: {
       subject: 'Your AV Champs account has been deleted',
-      title: 'Your account has been deleted',
-      message: 'Your AV Champs account has been deleted. Please contact your administrator if this was unexpected.'
+      eyebrow: 'Account Removed',
+      title: 'Account Deleted',
+      icon: '&#128465;',
+      statusLabel: 'Deleted',
+      statusColor: '#667085',
+      message: 'Your AV Champs account has been deleted by your administrator. Access to this workspace is no longer available.',
+      note: 'If you did not expect this action, please contact your administrator or support team immediately.',
+      buttonText: null,
+      buttonUrl: null
     }
   };
   const content = actionMessages[action];
@@ -177,25 +223,72 @@ async function sendUserActionMail(user, action) {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>${content.title}</title>
     </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f7f6;">
-      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6;">
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
         <tr>
-          <td align="center" style="padding: 40px 16px;">
-            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #dfe3e8; border-radius: 12px;">
+          <td align="center" style="padding: 20px 8px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #d5dbe5;">
               <tr>
-                <td style="padding: 36px 40px 12px 40px;">
-                  <h1 style="margin: 0; font-size: 28px; color: #1c293b;">${content.title}</h1>
+                <td align="center" style="background-color: #3f5ed7; padding: 58px 24px 52px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="font-size: 0; line-height: 0; margin-bottom: 16px;">
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                    <span style="display: inline-block; width: 32px; color: #ffffff; font-size: 22px; line-height: 22px; vertical-align: middle;">${content.icon}</span>
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                  </div>
+                  <p style="margin: 0 0 10px; font-size: 11px; line-height: 1.2; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase;">${content.eyebrow}</p>
+                  <h1 style="margin: 0; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 34px; line-height: 1.12; font-weight: 700; color: #ffffff;">${content.title}</h1>
                 </td>
               </tr>
               <tr>
-                <td style="padding: 12px 40px 28px 40px; color: #555555; font-size: 16px; line-height: 1.6;">
-                  <p style="margin: 0 0 18px;">Hello ${safeFullName},</p>
-                  <p style="margin: 0;">${content.message}</p>
+                <td style="padding: 52px 48px 48px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.85; font-weight: 400;">
+                  <p style="margin: 0 0 18px; font-size: 15px; font-weight: 700; color: #101828;">Hello ${safeFullName}!</p>
+                  <p style="margin: 0 0 20px;">${content.message}</p>
+
+                  <p style="margin: 0 0 14px; font-size: 14px; font-weight: 800; color: #101828;">&#128188;&nbsp; Account Details</p>
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-left: 3px solid #1f5cff; border-top: 1px solid #d9dee8; border-right: 1px solid #d9dee8; border-bottom: 1px solid #d9dee8; border-radius: 4px; margin: 0 0 28px;">
+                    <tr>
+                      <td style="padding: 22px 24px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 2; color: #101828;">
+                        <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Account Holder:</td>
+                            <td style="padding: 2px 0;">${safeFullName}</td>
+                          </tr>
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Email ID:</td>
+                            <td style="padding: 2px 0;">${safeEmail}</td>
+                          </tr>
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Status:</td>
+                            <td style="padding: 2px 0;"><span style="display: inline-block; background-color: ${content.statusColor}; color: #ffffff; border-radius: 3px; padding: 2px 7px; font-size: 10px; line-height: 1.4; font-weight: 800;">${content.statusLabel}</span></td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  ${content.buttonText ? `
+                  <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 36px;">
+                    <tr>
+                      <td align="center" style="background-color: #3f5ed7; border-radius: 4px;">
+                        <a href="${content.buttonUrl}" style="display: inline-block; padding: 13px 28px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; line-height: 1; font-weight: 800; text-decoration: none;">${content.buttonText}</a>
+                      </td>
+                    </tr>
+                  </table>
+                  ` : ''}
+
+                  <p style="margin: 0 0 44px; color: #53657d; font-size: 11px; line-height: 1.8;">${content.note}</p>
+                  <p style="margin: 0;">Regards,<br><strong>Team</strong></p>
                 </td>
               </tr>
               <tr>
-                <td style="padding: 0 40px 32px 40px; color: #555555; font-size: 14px;">
-                  <p style="margin: 0;"><strong>Sincerely,</strong><br>The AV Champs Team</p>
+                <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
+                  <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
+                  <p style="margin: 0;">+91-9966416417<br>support@assetsystems.org</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  &copy; 2026 AV Champs LLP. All Rights Reserved.
                 </td>
               </tr>
             </table>

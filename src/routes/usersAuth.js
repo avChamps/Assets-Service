@@ -40,8 +40,26 @@ function getEmailConfig() {
   return config;
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function sendForgotMail(email, otp) {
   const emailConfig = getEmailConfig();
+  const loginUrl = escapeHtml(process.env.APP_LOGIN_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/login');
+  const otpBoxes = String(otp || '')
+    .split('')
+    .map((digit) => `
+      <td style="padding: 0 6px 0 0;">
+        <span style="display: inline-block; width: 36px; height: 36px; border: 1px solid #1f5cff; border-radius: 3px; color: #1f5cff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 18px; line-height: 36px; text-align: center; font-weight: 500;">${escapeHtml(digit)}</span>
+      </td>
+    `)
+    .join('');
   const transporter = nm.createTransport({
     host: emailConfig.host,
     port: emailConfig.port,
@@ -161,14 +179,189 @@ async function sendForgotMail(email, otp) {
 </html>
   `;
 
+  const verificationHtmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Verify Your E-Mail Address</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
+        <tr>
+          <td align="center" style="padding: 20px 8px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #d5dbe5;">
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 62px 24px 52px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="font-size: 0; line-height: 0; margin-bottom: 16px;">
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                    <span style="display: inline-block; width: 32px; color: #ffffff; font-size: 22px; line-height: 22px; vertical-align: middle;">&#128737;</span>
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                  </div>
+                  <p style="margin: 0 0 10px; font-size: 11px; line-height: 1.2; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase;">Security Verification</p>
+                  <h1 style="margin: 0; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 34px; line-height: 1.12; font-weight: 700; color: #ffffff;">Verify Your E-Mail Address</h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 52px 48px 44px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.85; font-weight: 400;">
+                  <p style="margin: 0 0 6px;">Hello!</p>
+                  <p style="margin: 0 0 18px;">Please use the following One Time Password (OTP)</p>
+
+                  <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 22px;">
+                    <tr>
+                      ${otpBoxes}
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 20px;">This passcode will only be valid for the next 2 minutes. If the passcode does not work, you can use this login verification link:</p>
+                  <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 32px;">
+                    <tr>
+                      <td align="center" style="background-color: #3f5ed7; border-radius: 3px;">
+                        <a href="${loginUrl}" style="display: inline-block; padding: 13px 28px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; line-height: 1; font-weight: 800; text-decoration: none;">Verify Email</a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 54px; color: #ff2f2f; font-size: 11px; line-height: 1.8;"><strong>Note:</strong> This OTP is time sensitive and confidential. Please do not share it with anyone.</p>
+                  <p style="margin: 0;">Thank you,<br><strong>Team!</strong></p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
+                  <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
+                  <p style="margin: 0;">+91-9966416417<br>hello@avchamps.com</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
   const mailOptions = {
     from: emailConfig.user,
     to: email,
     subject: 'Here is your One-Time Password (OTP)',
-    html: htmlContent
+    html: verificationHtmlContent
   };
 
   return transporter.sendMail(mailOptions);
+}
+
+async function sendSignupWelcomeMail(user) {
+  const emailConfig = getEmailConfig();
+  const safeFullName = escapeHtml(user.fullName || 'Account Holder');
+  const safeCompanyName = escapeHtml(user.companyName || 'Your company');
+  const safeSubscriptionType = escapeHtml(user.subscriptionType || DEFAULT_SIGNUP_SUBSCRIPTION_TYPE);
+  const safePlanLabel = escapeHtml(`${safeSubscriptionType.charAt(0).toUpperCase()}${safeSubscriptionType.slice(1)} Plan (Active)`);
+  const loginUrl = escapeHtml(process.env.APP_LOGIN_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/login');
+  const transporter = nm.createTransport({
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: {
+      user: emailConfig.user,
+      pass: emailConfig.password
+    }
+  });
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Welcome to the Platform</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
+        <tr>
+          <td align="center" style="padding: 20px 8px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #d5dbe5;">
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 58px 24px 52px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="font-size: 0; line-height: 0; margin-bottom: 16px;">
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                    <span style="display: inline-block; width: 32px; color: #ffffff; font-size: 22px; line-height: 22px; vertical-align: middle;">&#128640;</span>
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                  </div>
+                  <p style="margin: 0 0 10px; font-size: 11px; line-height: 1.2; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase;">Setup Complete</p>
+                  <h1 style="margin: 0; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 34px; line-height: 1.12; font-weight: 700; color: #ffffff;">Welcome to the Platform! &#127881;</h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 52px 48px 48px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.85; font-weight: 400;">
+                  <p style="margin: 0 0 18px; font-size: 15px; font-weight: 700; color: #101828;">Hello ${safeFullName}!</p>
+                  <p style="margin: 0 0 20px;">Your account setup is complete! Your company <strong>${safeCompanyName}</strong> has been successfully registered, and your <strong>${safeSubscriptionType}</strong> Plan is now active. You're all set to start managing your assets and operations efficiently.</p>
+
+                  <p style="margin: 0 0 14px; font-size: 14px; font-weight: 800; color: #101828;">&#128188;&nbsp; Account Summary</p>
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-left: 3px solid #1f5cff; border-top: 1px solid #d9dee8; border-right: 1px solid #d9dee8; border-bottom: 1px solid #d9dee8; border-radius: 4px; margin: 0 0 28px;">
+                    <tr>
+                      <td style="padding: 22px 24px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 2; color: #101828;">
+                        <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Account Holder:</td>
+                            <td style="padding: 2px 0;">${safeFullName}</td>
+                          </tr>
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Company:</td>
+                            <td style="padding: 2px 0;">${safeCompanyName}</td>
+                          </tr>
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Plan:</td>
+                            <td style="padding: 2px 0;"><span style="display: inline-block; background-color: #0a8f3c; color: #ffffff; border-radius: 3px; padding: 2px 7px; font-size: 10px; line-height: 1.4; font-weight: 800;">${safePlanLabel}</span></td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 20px;">You can now access your dashboard and begin exploring the features available to you.</p>
+                  <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 36px;">
+                    <tr>
+                      <td align="center" style="background-color: #3f5ed7; border-radius: 4px;">
+                        <a href="${loginUrl}" style="display: inline-block; padding: 13px 28px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; line-height: 1; font-weight: 800; text-decoration: none;">&#128073;&nbsp; Login to Your Account</a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 44px; color: #53657d; font-size: 11px; line-height: 1.8;">If you did not create this account, please contact our support team immediately. We're excited to support your journey and help you streamline your asset management.</p>
+                  <p style="margin: 0;">Regards,<br><strong>Team!</strong></p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
+                  <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
+                  <p style="margin: 0;">+91-9966416417<br>hello@avchamps.com</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return transporter.sendMail({
+    from: emailConfig.user,
+    to: user.workEmail,
+    subject: 'Welcome to Asset Systems - Your Account is Ready!',
+    html: htmlContent
+  });
 }
 
 function cleanWhatsAppValue(value, fallback = 'N/A') {
@@ -215,6 +408,16 @@ async function sendWhatsAppSafely(message, logLabel) {
     await sendMessageToGroup(message);
   } catch (error) {
     console.error(`${logLabel}:`, error.message);
+  }
+}
+
+async function sendMailSafely(mailPromise, logLabel) {
+  try {
+    await mailPromise;
+    return { sent: true, error: null };
+  } catch (error) {
+    console.error(`${logLabel}:`, error.message);
+    return { sent: false, error: error.message };
   }
 }
 
@@ -366,6 +569,16 @@ router.post('/create-user', async (req, res) => {
       }
     });
 
+    const welcomeMail = await sendMailSafely(
+      sendSignupWelcomeMail({
+        fullName,
+        workEmail,
+        companyName,
+        subscriptionType: effectiveSubscriptionType
+      }),
+      'Failed to send signup welcome email'
+    );
+
     await sendWhatsAppSafely(
       buildSignupWhatsAppMessage({
         fullName,
@@ -408,6 +621,8 @@ router.post('/create-user', async (req, res) => {
         companyName,
         isAdmin,
         subscriptionType: effectiveSubscriptionType,
+        welcomeEmailSent: welcomeMail.sent,
+        welcomeEmailError: welcomeMail.error,
         jobTitle,
         location: location || null
       }

@@ -835,6 +835,16 @@ router.get('/', async (req, res) => {
       LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
       ${retiredScopedFilters.whereSql}
     `;
+    const hardwareRecycleSql = `
+      SELECT
+        COALESCE(NULLIF(TRIM(r.retirementStatus), ''), 'Not Specified') AS name,
+        COUNT(*) AS value
+      FROM retiredInvertory r
+      LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
+      ${retiredScopedFilters.whereSql}
+      GROUP BY COALESCE(NULLIF(TRIM(r.retirementStatus), ''), 'Not Specified')
+      ORDER BY value DESC, name ASC
+    `;
     const roomCapacitySql = `
       SELECT
         ${paxNameSql} AS name,
@@ -946,6 +956,7 @@ router.get('/', async (req, res) => {
       [totalRows],
       [ticketRows],
       [retiredRows],
+      [hardwareRecycleRows],
       [roomRows],
       [deviceRows],
       [ticketStatusRows],
@@ -961,6 +972,7 @@ router.get('/', async (req, res) => {
       db.query(totalsSql, [alertWindowDays, ...assetFilters.params]),
       db.query(ticketsSql, ticketScopedFilters.params),
       db.query(retiredSql, retiredScopedFilters.params),
+      db.query(hardwareRecycleSql, retiredScopedFilters.params),
       db.query(roomCapacitySql, unaliasedAssetFilters.params),
       db.query(deviceTypeSql, unaliasedAssetFilters.params),
       db.query(ticketStatusSql, ticketScopedFilters.params),
@@ -1039,11 +1051,7 @@ router.get('/', async (req, res) => {
       },
       hardwareRecycle: {
         totalDevices: totals.hardwareRecycle,
-        data: [{
-          name: 'Hardware Recycle',
-          value: totals.hardwareRecycle,
-          percentage: percentageValue(totals.hardwareRecycle, totals.totalAssets)
-        }]
+        data: mapNamedValueRows(hardwareRecycleRows, 'name', 'value', totals.hardwareRecycle)
       },
       topRoomsWithIssues: {
         data: issueRows.map((row) => ({

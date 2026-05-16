@@ -217,6 +217,12 @@ router.get('/', async (req, res) => {
     const assetsSql = `
       SELECT
         COUNT(*) AS totalAssets,
+        SUM(
+          CASE
+            WHEN NULLIF(TRIM(roomName), '') IS NOT NULL
+            THEN 1 ELSE 0
+          END
+        ) AS allocatedAssets,
         COALESCE(SUM(COALESCE(quantity, 0) * COALESCE(unitPrice, 0)), 0) AS investment,
         SUM(
           CASE
@@ -267,7 +273,7 @@ router.get('/', async (req, res) => {
     const stats = {
       assets: {
         total: numberValue(assetRows[0], 'totalAssets'),
-        allocated: 0,
+        allocated: numberValue(assetRows[0], 'allocatedAssets'),
         maintenance: 0,
         expiringWarranties: numberValue(assetRows[0], 'expiringWarranties')
       },

@@ -122,6 +122,15 @@ const LIST_FILTER_COLUMNS = [
   'make',
   'assetType'
 ];
+const LIST_SEARCH_COLUMNS = [
+  'assetTag',
+  'assetName',
+  'assetType',
+  'make',
+  'model',
+  'serialNo',
+  'roomName'
+];
 const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'assetTag', 'isActive', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
 const FILE_IMPORT_COLUMNS = INSERT_COLUMNS.filter((column) => !FILE_IGNORED_COLUMNS.has(column));
 const CSV_HEADER_MAP = new Map(
@@ -527,6 +536,7 @@ function validateAssetForInsert(asset) {
 function buildListFilters(query, tenantId) {
   const conditions = ['tenantId = ?', 'isActive = TRUE'];
   const params = [tenantId];
+  const search = typeof query.search === 'string' ? query.search.trim() : query.search;
 
   for (const column of LIST_FILTER_COLUMNS) {
     const value = query[column];
@@ -535,6 +545,13 @@ function buildListFilters(query, tenantId) {
       conditions.push(`${column} = ?`);
       params.push(typeof value === 'string' ? value.trim() : value);
     }
+  }
+
+  if (!isMissing(search)) {
+    const searchConditions = LIST_SEARCH_COLUMNS.map((column) => `${column} LIKE ?`);
+
+    conditions.push(`(${searchConditions.join(' OR ')})`);
+    params.push(...LIST_SEARCH_COLUMNS.map(() => `%${search}%`));
   }
 
   return {

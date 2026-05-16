@@ -13,7 +13,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_TICKET_STATUS = 'Pending';
 const TICKET_NUMBER_PREFIX = 'AST';
 const TICKET_NUMBER_START = TICKET_NUMBER_PREFIX.length + 2;
-const ALLOWED_TICKET_STATUSES = new Set(['Opened', 'Pending', 'Closed']);
+const ALLOWED_TICKET_STATUSES = new Set(['Opened', 'Pending', 'Closed','In Progress']);
 
 const TICKET_COLUMNS = [
   'id',
@@ -487,7 +487,13 @@ router.get('/', async (req, res) => {
       LEFT JOIN assets a ON a.id = t.assetId AND a.tenantId = t.tenantId
       ${buildTicketUserNameJoins()}
       ${whereSql}
-      ORDER BY t.createdAt DESC
+      ORDER BY
+        CASE
+          WHEN t.status = 'Pending' THEN 0
+          WHEN t.status = 'Closed' THEN 2
+          ELSE 1
+        END,
+        t.createdAt DESC
       LIMIT ? OFFSET ?
     `;
     const statusCountsSql = `

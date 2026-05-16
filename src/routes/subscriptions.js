@@ -172,6 +172,20 @@ function formatAmount(amount, currency) {
   return `${currency} ${numericAmount.toFixed(2)}`;
 }
 
+function formatDisplayDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return cleanText(value);
+  }
+
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
 async function getSubscriptionPlan(connection, subscriptionType) {
   const [rows] = await connection.query(
     `
@@ -222,11 +236,8 @@ async function sendSubscriptionUpdateMail(recipient, subscription) {
   const safeFullName = escapeHtml(recipient.fullName || 'User');
   const safeCompanyName = escapeHtml(recipient.companyName || 'your company');
   const safeSubscriptionType = escapeHtml(subscription.subscriptionType);
-  const safeStartDate = escapeHtml(subscription.subscriptionStartDate);
-  const safeEndDate = escapeHtml(subscription.subscriptionEndDate);
-  const safeAmount = escapeHtml(formatAmount(subscription.amount, subscription.currency));
-  const safeMaxUsers = escapeHtml(subscription.maxUsers);
-  const safeMaxAssets = escapeHtml(subscription.maxAssets);
+  const safePlanLabel = escapeHtml(`${safeSubscriptionType} (Active)`);
+  const dashboardUrl = escapeHtml(process.env.APP_DASHBOARD_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/dashboard');
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -234,35 +245,74 @@ async function sendSubscriptionUpdateMail(recipient, subscription) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Subscription Plan Updated</title>
+      <title>Plan Upgraded Successfully</title>
     </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f7f6;">
-      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6;">
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
         <tr>
-          <td align="center" style="padding: 40px 16px;">
-            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #dfe3e8; border-radius: 12px;">
+          <td align="center" style="padding: 20px 8px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #d5dbe5;">
               <tr>
-                <td style="padding: 36px 40px 12px 40px;">
-                  <h1 style="margin: 0; font-size: 28px; color: #1c293b;">Subscription plan updated</h1>
+                <td align="center" style="background-color: #3f5ed7; padding: 58px 24px 52px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="font-size: 0; line-height: 0; margin-bottom: 16px;">
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                    <span style="display: inline-block; width: 32px; color: #ffffff; font-size: 22px; line-height: 22px; vertical-align: middle;">&#10024;</span>
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                  </div>
+                  <p style="margin: 0 0 10px; font-size: 11px; line-height: 1.2; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase;">Upgrade Confirmed</p>
+                  <h1 style="margin: 0 0 18px; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 34px; line-height: 1.12; font-weight: 700; color: #ffffff;">Plan Upgraded Successfully</h1>
+                  <div style="font-size: 28px; line-height: 1;">&#128640;</div>
                 </td>
               </tr>
               <tr>
-                <td style="padding: 12px 40px 28px 40px; color: #555555; font-size: 16px; line-height: 1.6;">
-                  <p style="margin: 0 0 18px;">Hello ${safeFullName},</p>
-                  <p style="margin: 0 0 18px;">The subscription plan for ${safeCompanyName} has been updated.</p>
-                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; border-radius: 8px;">
-                    <tr><td style="padding: 16px 18px 8px;"><strong>Plan:</strong> ${safeSubscriptionType}</td></tr>
-                    <tr><td style="padding: 8px 18px;"><strong>Start date:</strong> ${safeStartDate}</td></tr>
-                    <tr><td style="padding: 8px 18px;"><strong>End date:</strong> ${safeEndDate}</td></tr>
-                    <tr><td style="padding: 8px 18px;"><strong>Amount:</strong> ${safeAmount}</td></tr>
-                    <tr><td style="padding: 8px 18px;"><strong>Allowed users:</strong> ${safeMaxUsers}</td></tr>
-                    <tr><td style="padding: 8px 18px 16px;"><strong>Allowed assets:</strong> ${safeMaxAssets}</td></tr>
+                <td style="padding: 52px 48px 48px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.85; font-weight: 400;">
+                  <p style="margin: 0 0 18px; font-size: 15px; font-weight: 700; color: #101828;">Hello ${safeFullName}!</p>
+                  <p style="margin: 0 0 20px;">Great news! Your plan has been successfully upgraded. Your account is now on the <strong>${safeSubscriptionType}</strong> Plan, unlocking more powerful features to help you manage and scale your operations more efficiently.</p>
+
+                  <p style="margin: 0 0 14px; font-size: 14px; font-weight: 800; color: #101828;">&#128188;&nbsp; Updated Plan Details</p>
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-left: 3px solid #1f5cff; border-top: 1px solid #d9dee8; border-right: 1px solid #d9dee8; border-bottom: 1px solid #d9dee8; border-radius: 4px; margin: 0 0 28px;">
+                    <tr>
+                      <td style="padding: 22px 24px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 2; color: #101828;">
+                        <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Account Holder:</td>
+                            <td style="padding: 2px 0;">${safeFullName}</td>
+                          </tr>
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Company:</td>
+                            <td style="padding: 2px 0;">${safeCompanyName}</td>
+                          </tr>
+                          <tr>
+                            <td width="140" style="font-weight: 700; padding: 2px 0;">Current Plan:</td>
+                            <td style="padding: 2px 0;"><span style="display: inline-block; background-color: #1f5cff; color: #ffffff; border-radius: 3px; padding: 2px 7px; font-size: 10px; line-height: 1.4; font-weight: 800;">${safePlanLabel}</span></td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
                   </table>
+
+                  <p style="margin: 0 0 20px;">You can now enjoy enhanced capabilities and improved performance across the platform.</p>
+                  <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 36px;">
+                    <tr>
+                      <td align="center" style="background-color: #3f5ed7; border-radius: 4px;">
+                        <a href="${dashboardUrl}" style="display: inline-block; padding: 13px 28px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 11px; line-height: 1; font-weight: 800; text-decoration: none;">&#128073;&nbsp; Access Your Dashboard</a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 44px; color: #53657d; font-size: 11px; line-height: 1.8;">If you did not request this upgrade, please contact our support team immediately. We're excited to continue supporting your growth!</p>
+                  <p style="margin: 0;">Regards,<br><strong>Team</strong></p>
                 </td>
               </tr>
               <tr>
-                <td style="padding: 0 40px 32px 40px; color: #555555; font-size: 14px;">
-                  <p style="margin: 0;"><strong>Sincerely,</strong><br>The AV Champs Team</p>
+                <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
+                  <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
+                  <p style="margin: 0;">+91-9966416417<br>hello@avchamps.com</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  &copy; 2026 AV Champs LLP. All Rights Reserved.
                 </td>
               </tr>
             </table>
@@ -276,7 +326,119 @@ async function sendSubscriptionUpdateMail(recipient, subscription) {
   return transporter.sendMail({
     from: emailConfig.user,
     to: recipient.workEmail,
-    subject: 'Your AV Champs subscription plan has been updated',
+    subject: 'Your Asset Systems subscription plan has been updated',
+    html: htmlContent
+  });
+}
+
+async function sendSubscriptionInvoiceMail(recipient, subscription) {
+  const emailConfig = getEmailConfig();
+  const transporter = nm.createTransport({
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: {
+      user: emailConfig.user,
+      pass: emailConfig.password
+    }
+  });
+
+  const safeCompanyName = escapeHtml(recipient.companyName || 'Client Company');
+  const safeFullName = escapeHtml(recipient.fullName || 'Client');
+  const safeEmail = escapeHtml(recipient.workEmail || '');
+  const safeSubscriptionType = escapeHtml(subscription.subscriptionType);
+  const safeInvoiceDate = escapeHtml(formatDisplayDate(subscription.invoiceDate || new Date()));
+  const safeAmount = escapeHtml(formatAmount(subscription.amount, subscription.currency));
+  const safeGstDetails = escapeHtml(subscription.gstDetails || 'Not provided');
+  const invoiceDownloadUrl = escapeHtml(process.env.APP_INVOICE_URL || process.env.APP_DASHBOARD_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/dashboard');
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Invoice</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
+        <tr>
+          <td align="center" style="padding: 20px 8px;">
+            <table width="700" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 700px; background-color: #ffffff; border: 1px solid #d5dbe5;">
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 42px 24px 38px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <h1 style="margin: 0 0 14px; font-size: 34px; line-height: 1.1; font-weight: 800; color: #ffffff;">INVOICE</h1>
+                  <p style="margin: 0; font-size: 12px; line-height: 1.4; font-weight: 700;">Invoice Date: ${safeInvoiceDate}</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 46px 48px 40px; color: #101828; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.55;">
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 34px;">
+                    <tr>
+                      <td width="48%" valign="top" style="padding-right: 24px; border-right: 1px solid #d9dee8;">
+                        <p style="margin: 0 0 10px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #253858;">Billed To (Client):</p>
+                        <p style="margin: 0; font-weight: 700;">${safeCompanyName}</p>
+                        <p style="margin: 0;"><strong>${safeFullName}</strong></p>
+                        <p style="margin: 0;"><strong>POC:</strong> ${safeEmail}</p>
+                        <p style="margin: 0;"><strong>GST:</strong> ${safeGstDetails}</p>
+                      </td>
+                      <td width="52%" valign="top" style="padding-left: 24px;">
+                        <p style="margin: 0 0 10px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #253858;">From:</p>
+                        <p style="margin: 0; font-weight: 800;">AV Champs LLP</p>
+                        <p style="margin: 0;">123, Business Park Avenue,</p>
+                        <p style="margin: 0;">Floor 4, Sector 18, India</p>
+                        <p style="margin: 0;"><strong>GST:</strong> 24AAAAA0000A1Z5</p>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border: 1px solid #d9dee8; border-radius: 4px; margin: 0 0 42px;">
+                    <tr>
+                      <td style="padding: 14px 16px; color: #1f5cff; border-bottom: 2px solid #1f5cff; font-size: 12px;">Item Description</td>
+                      <td align="right" style="padding: 14px 16px; color: #1f5cff; border-bottom: 2px solid #1f5cff; font-size: 12px;">Amount</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 18px 16px 22px;">
+                        <p style="margin: 0 0 8px; font-weight: 800;">${safeSubscriptionType}</p>
+                        <p style="margin: 0; color: #53657d;">Subscription for asset management services</p>
+                      </td>
+                      <td align="right" style="padding: 18px 16px 22px; font-weight: 800;">${safeAmount}</td>
+                    </tr>
+                    <tr>
+                      <td align="right" style="padding: 16px; background-color: #f4f6f9; border-top: 1px solid #d9dee8; font-weight: 800;">Total Amount:</td>
+                      <td align="right" style="padding: 16px; background-color: #f4f6f9; border-top: 1px solid #d9dee8; color: #1f5cff; font-weight: 800;">${safeAmount}</td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0 0 24px; text-align: center; color: #53657d; font-size: 12px;">Click below to download a PDF copy of your invoice for your records.</p>
+                  <table border="0" cellpadding="0" cellspacing="0" align="center" style="margin: 0 auto 48px;">
+                    <tr>
+                      <td align="center" style="background-color: #3f5ed7; border-radius: 4px;">
+                        <a href="${invoiceDownloadUrl}" style="display: inline-block; padding: 13px 28px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1; font-weight: 800; text-decoration: none;">&#128196;&nbsp; Download Invoice</a>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0; text-align: center; color: #53657d; font-size: 12px;">Thank you for choosing AV Champs LLP!</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return transporter.sendMail({
+    from: emailConfig.user,
+    to: recipient.workEmail,
+    subject: 'Your AV Champs invoice',
     html: htmlContent
   });
 }
@@ -812,6 +974,8 @@ async function createTenantSubscription(req, res) {
 
     let emailSent = false;
     let emailError = null;
+    let invoiceEmailSent = false;
+    let invoiceEmailError = null;
 
     if (mailRecipient?.workEmail) {
       try {
@@ -828,12 +992,25 @@ async function createTenantSubscription(req, res) {
       } catch (error) {
         emailError = error.message;
       }
+
+      try {
+        await sendSubscriptionInvoiceMail(mailRecipient, {
+          subscriptionType,
+          amount,
+          currency,
+          invoiceDate: subscriptionStartDate,
+          gstDetails: req.body?.gstDetails || req.body?.gst || null
+        });
+        invoiceEmailSent = true;
+      } catch (error) {
+        invoiceEmailError = error.message;
+      }
     }
 
     return res.status(201).json({
       success: true,
-      message: emailError
-        ? 'Tenant subscription created successfully, but notification email failed'
+      message: emailError || invoiceEmailError
+        ? 'Tenant subscription created successfully, but one or more emails failed'
         : 'Tenant subscription created successfully',
       data: {
         subscriptionId,
@@ -847,6 +1024,8 @@ async function createTenantSubscription(req, res) {
         emailSent,
         emailTo: mailRecipient?.workEmail || null,
         emailError,
+        invoiceEmailSent,
+        invoiceEmailError,
         closedRequest
       }
     });

@@ -139,6 +139,10 @@ function parsePositiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function numberValue(row, key) {
+  return Number(row?.[key] || 0);
+}
+
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : value;
 }
@@ -161,14 +165,28 @@ function mapRetiredInventoryRow(row) {
   };
 }
 
-function buildListFilters(query, tenantId) {
+function mapOptionRows(rows) {
+  return rows.map((row) => ({
+    id: row.value,
+    name: row.value
+  }));
+}
+
+function buildListFilters(query, tenantId, options = {}) {
+  const { includeAssetType = true } = options;
   const conditions = ['r.tenantId = ?'];
   const params = [tenantId];
   const search = normalizeString(query.search);
+  const assetType = normalizeString(query.assetType || query.assetTypeId);
 
   if (!isMissing(search)) {
     conditions.push(`(${SEARCH_COLUMNS.map((column) => `${column} LIKE ?`).join(' OR ')})`);
     params.push(...SEARCH_COLUMNS.map(() => `%${search}%`));
+  }
+
+  if (includeAssetType && !isMissing(assetType)) {
+    conditions.push('a.assetType = ?');
+    params.push(assetType);
   }
 
   return {
@@ -339,12 +357,31 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
     const db = pool.promise();
     const { whereSql, params } = buildListFilters(req.query, req.user.tenantId);
+    const {
+      whereSql: filterOptionsWhereSql,
+      params: filterOptionsParams
+    } = buildListFilters(req.query, req.user.tenantId, { includeAssetType: false });
 
     const countSql = `
       SELECT COUNT(*) AS total
       FROM retiredInvertory r
       LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
       ${whereSql}
+    `;
+    const totalAssetsValueSql = `
+      SELECT COALESCE(SUM(COALESCE(a.quantity, 0) * COALESCE(a.unitPrice, 0)), 0) AS totalAssetsValue
+      FROM retiredInvertory r
+      LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
+      ${whereSql}
+    `;
+    const assetTypesSql = `
+      SELECT DISTINCT TRIM(a.assetType) AS value
+      FROM retiredInvertory r
+      LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
+      ${filterOptionsWhereSql}
+        AND a.assetType IS NOT NULL
+        AND TRIM(a.assetType) <> ''
+      ORDER BY value ASC
     `;
     const listSql = `
       SELECT
@@ -357,17 +394,24 @@ router.get('/', async (req, res) => {
       LIMIT ? OFFSET ?
     `;
 
-    const [[countRows], [rows]] = await Promise.all([
+    const [[countRows], [totalAssetsValueRows], [assetTypeRows], [rows]] = await Promise.all([
       db.query(countSql, params),
+      db.query(totalAssetsValueSql, params),
+      db.query(assetTypesSql, filterOptionsParams),
       db.query(listSql, [...params, limit, offset])
     ]);
-    const totalRecords = countRows[0]?.total || 0;
+    const totalRecords = numberValue(countRows[0], 'total');
+    const totalAssetsValue = numberValue(totalAssetsValueRows[0], 'totalAssetsValue');
     const totalPages = Math.ceil(totalRecords / limit);
 
     return res.status(200).json({
       success: true,
       message: 'Retired inventory fetched successfully',
       data: rows.map(mapRetiredInventoryRow),
+      totalAssetsValue,
+      filterOptions: {
+        assetTypes: mapOptionRows(assetTypeRows)
+      },
       pagination: {
         page,
         limit,

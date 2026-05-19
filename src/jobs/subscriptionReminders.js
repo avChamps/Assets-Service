@@ -203,7 +203,7 @@ async function sendExpiryReminderMail(transporter, subscription) {
               </tr>
               <tr>
                 <td style="padding: 0 40px 32px 40px; color: #555555; font-size: 14px;">
-                  <p style="margin: 0;"><strong>Sincerely,</strong><br>The AV Champs Team</p>
+                  <p style="margin: 0;"><strong>Sincerely,</strong><br>TheAsset SystemsTeam</p>
                 </td>
               </tr>
             </table>
@@ -217,7 +217,7 @@ async function sendExpiryReminderMail(transporter, subscription) {
   return transporter.sendMail({
     from: emailConfig.user,
     to: subscription.workEmail,
-    subject: 'Your AV Champs subscription expires in 7 days',
+    subject: 'YourAsset Systemssubscription expires in 7 days',
     html: htmlContent
   });
 }

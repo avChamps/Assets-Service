@@ -184,6 +184,12 @@ function buildCards(stats) {
         title: 'Pending tickets',
         value: stats.tickets.pending,
         description: 'Waiting for action'
+      },
+      {
+        key: 'inProgressTickets',
+        title: 'In-progress tickets',
+        value: stats.tickets.inProgress,
+        description: 'Work in progress'
       }
     ]
   };
@@ -252,6 +258,7 @@ router.get('/', async (req, res) => {
         COUNT(*) AS totalTickets,
         SUM(CASE WHEN status = 'Opened' THEN 1 ELSE 0 END) AS openedTickets,
         SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) AS pendingTickets,
+        SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) AS inProgressTickets,
         SUM(CASE WHEN status = 'Closed' THEN 1 ELSE 0 END) AS closedTickets
       FROM tickts
       WHERE tenantId = ?
@@ -292,6 +299,7 @@ router.get('/', async (req, res) => {
         total: numberValue(ticketRows[0], 'totalTickets'),
         opened: numberValue(ticketRows[0], 'openedTickets'),
         pending: numberValue(ticketRows[0], 'pendingTickets'),
+        inProgress: numberValue(ticketRows[0], 'inProgressTickets'),
         closed: numberValue(ticketRows[0], 'closedTickets')
       }
     };

@@ -137,7 +137,7 @@ async function sendTemporaryPasswordMail(email, fullName, temporaryPassword) {
               </tr>
               <tr>
                 <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
-                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                  @2026, All Rihts reserved
                 </td>
               </tr>
             </table>
@@ -151,7 +151,7 @@ async function sendTemporaryPasswordMail(email, fullName, temporaryPassword) {
   return transporter.sendMail({
     from: emailConfig.user,
     to: email,
-    subject: 'Your AV Champs account credentials',
+    subject: 'YourAsset Systemsaccount credentials',
     html: htmlContent
   });
 }
@@ -163,37 +163,37 @@ async function sendUserActionMail(user, action) {
   const dashboardUrl = escapeHtml(process.env.APP_DASHBOARD_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/dashboard');
   const actionMessages = {
     enabled: {
-      subject: 'Your AV Champs account has been enabled',
+      subject: 'YourAsset Systemsaccount has been enabled',
       eyebrow: 'Access Restored',
       title: 'Account Enabled Successfully',
       icon: '&#9989;',
       statusLabel: 'Active',
       statusColor: '#0a8f3c',
-      message: 'Your AV Champs account has been enabled by your administrator. You can now access the platform and continue using your workspace.',
+      message: 'YourAsset Systemsaccount has been enabled by your administrator. You can now access the platform and continue using your workspace.',
       note: 'If you did not expect this change, please contact your administrator immediately.',
       buttonText: '&#128073;&nbsp; Access Your Dashboard',
       buttonUrl: dashboardUrl
     },
     disabled: {
-      subject: 'Your AV Champs account has been disabled',
+      subject: 'YourAsset Systemsaccount has been disabled',
       eyebrow: 'Access Updated',
       title: 'Account Disabled',
       icon: '&#9888;',
       statusLabel: 'Disabled',
       statusColor: '#d92d20',
-      message: 'Your AV Champs account has been disabled by your administrator. You will not be able to access the platform until access is restored.',
+      message: 'YourAsset Systemsaccount has been disabled by your administrator. You will not be able to access the platform until access is restored.',
       note: 'If you need access again or believe this was unexpected, please contact your administrator.',
       buttonText: null,
       buttonUrl: null
     },
     deleted: {
-      subject: 'Your AV Champs account has been deleted',
+      subject: 'YourAsset Systemsaccount has been deleted',
       eyebrow: 'Account Removed',
       title: 'Account Deleted',
       icon: '&#128465;',
       statusLabel: 'Deleted',
       statusColor: '#667085',
-      message: 'Your AV Champs account has been deleted by your administrator. Access to this workspace is no longer available.',
+      message: 'YourAsset Systemsaccount has been deleted by your administrator. Access to this workspace is no longer available.',
       note: 'If you did not expect this action, please contact your administrator or support team immediately.',
       buttonText: null,
       buttonUrl: null
@@ -288,7 +288,7 @@ async function sendUserActionMail(user, action) {
               </tr>
               <tr>
                 <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
-                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                  @2026, All Rihts reserved
                 </td>
               </tr>
             </table>

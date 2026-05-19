@@ -13,7 +13,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_TICKET_STATUS = 'Pending';
 const TICKET_NUMBER_PREFIX = 'AST';
 const TICKET_NUMBER_START = TICKET_NUMBER_PREFIX.length + 2;
-const ALLOWED_TICKET_STATUSES = new Set(['Opened', 'Pending', 'Closed','In Progress']);
+const ALLOWED_TICKET_STATUSES = new Set(['Opened', 'Pending', 'Closed', 'In Progress']);
 
 const TICKET_COLUMNS = [
   'id',
@@ -162,6 +162,24 @@ function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : value;
 }
 
+function normalizeTicketStatus(value) {
+  const status = normalizeString(value);
+
+  if (isMissing(status)) {
+    return status;
+  }
+
+  const normalized = String(status).toLowerCase().replace(/[\s_-]+/g, '');
+  const statusMap = {
+    opened: 'Opened',
+    pending: 'Pending',
+    closed: 'Closed',
+    inprogress: 'In Progress'
+  };
+
+  return statusMap[normalized] || status;
+}
+
 function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -237,7 +255,7 @@ function buildListFilters(query, tenantId, options = {}) {
   const conditions = ['t.tenantId = ?'];
   const params = [tenantId];
   const search = normalizeString(query.search);
-  const status = normalizeString(query.status);
+  const status = normalizeTicketStatus(query.status);
   const startDate = cleanText(query.startDate || query.fromDate);
   const endDate = cleanText(query.endDate || query.toDate);
 
@@ -268,8 +286,10 @@ function buildListFilters(query, tenantId, options = {}) {
 }
 
 function validateTicketStatus(status) {
-  if (!isMissing(status) && !ALLOWED_TICKET_STATUSES.has(status)) {
-    return 'status must be Opened, Pending, or Closed';
+  const normalizedStatus = normalizeTicketStatus(status);
+
+  if (!isMissing(normalizedStatus) && !ALLOWED_TICKET_STATUSES.has(normalizedStatus)) {
+    return 'status must be Opened, Pending, Closed, or In Progress';
   }
 
   return null;
@@ -280,6 +300,8 @@ function buildTicketCounts(rows) {
     total: 0,
     Opened: 0,
     Pending: 0,
+    'In Progress': 0,
+    inProgress: 0,
     Closed: 0
   };
 
@@ -290,6 +312,10 @@ function buildTicketCounts(rows) {
 
     if (Object.prototype.hasOwnProperty.call(counts, row.status)) {
       counts[row.status] = count;
+    }
+
+    if (row.status === 'In Progress') {
+      counts.inProgress = count;
     }
   }
 
@@ -678,7 +704,7 @@ router.get('/asset/:assetId', async (req, res) => {
 // PATCH /api/tickets/:id/status
 router.patch('/:id/status', async (req, res) => {
   try {
-    const status = normalizeString(req.body.status);
+    const status = normalizeTicketStatus(req.body.status);
 
     const validationError = validateTicketStatus(status);
     if (validationError) {

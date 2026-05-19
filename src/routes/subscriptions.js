@@ -307,12 +307,12 @@ async function sendSubscriptionUpdateMail(recipient, subscription) {
               <tr>
                 <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
                   <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
-                  <p style="margin: 0;">+91-9966416417<br>hello@avchamps.com</p>
+                  <p style="margin: 0;">+91-9966416417<br>support@assetsystems.org</p>
                 </td>
               </tr>
               <tr>
                 <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
-                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                  @2026, All Rihts reserved
                 </td>
               </tr>
             </table>
@@ -384,7 +384,7 @@ async function sendSubscriptionInvoiceMail(recipient, subscription) {
                       </td>
                       <td width="52%" valign="top" style="padding-left: 24px;">
                         <p style="margin: 0 0 10px; font-size: 11px; font-weight: 800; text-transform: uppercase; color: #253858;">From:</p>
-                        <p style="margin: 0; font-weight: 800;">AV Champs LLP</p>
+                        <p style="margin: 0; font-weight: 800;">Asset Systems LLP</p>
                         <p style="margin: 0;">123, Business Park Avenue,</p>
                         <p style="margin: 0;">Floor 4, Sector 18, India</p>
                         <p style="margin: 0;"><strong>GST:</strong> 24AAAAA0000A1Z5</p>
@@ -419,12 +419,12 @@ async function sendSubscriptionInvoiceMail(recipient, subscription) {
                     </tr>
                   </table>
 
-                  <p style="margin: 0; text-align: center; color: #53657d; font-size: 12px;">Thank you for choosing AV Champs LLP!</p>
+                  <p style="margin: 0; text-align: center; color: #53657d; font-size: 12px;">Thank you for choosingAsset SystemsLLP!</p>
                 </td>
               </tr>
               <tr>
                 <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
-                  &copy; 2026 AV Champs LLP. All Rights Reserved.
+                  @2026, All Rihts reserved
                 </td>
               </tr>
             </table>
@@ -438,7 +438,7 @@ async function sendSubscriptionInvoiceMail(recipient, subscription) {
   return transporter.sendMail({
     from: emailConfig.user,
     to: recipient.workEmail,
-    subject: 'Your AV Champs invoice',
+    subject: 'YourAsset Systemsinvoice',
     html: htmlContent
   });
 }

@@ -446,6 +446,20 @@ router.post('/', async (req, res) => {
       createdBy: req.user.userId
     });
 
+    await logAuditEvent({
+      req,
+      action: 'ticket.create',
+      entityType: 'ticket',
+      entityId: id,
+      entityLabel: ticketNumber,
+      metadata: {
+        ticketNumber,
+        assetId,
+        subject,
+        status: DEFAULT_TICKET_STATUS
+      }
+    });
+
     const [rows] = await db.query(
       `SELECT
          ${buildAliasedColumns('t', TICKET_COLUMNS, 'ticket_')},
@@ -753,6 +767,21 @@ router.patch('/:id/status', async (req, res) => {
       entityType: 'ticket',
       entityId: req.params.id,
       createdBy: req.user.userId
+    });
+
+    await logAuditEvent({
+      req,
+      action: 'ticket.update',
+      entityType: 'ticket',
+      entityId: req.params.id,
+      entityLabel: currentRows[0].ticketNumber,
+      metadata: {
+        changedFields: ['status'],
+        ticketNumber: currentRows[0].ticketNumber,
+        subject: currentRows[0].subject,
+        previousStatus: currentRows[0].status,
+        status
+      }
     });
 
     const [rows] = await db.query(

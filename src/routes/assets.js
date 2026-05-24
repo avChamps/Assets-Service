@@ -114,6 +114,11 @@ const NULLABLE_FIELDS = new Set([
 
 const INTEGER_FIELDS = new Set(['floorNumber', 'pax', 'quantity']);
 const DECIMAL_FIELDS = new Set(['unitPrice']);
+const UNIQUE_ASSET_FIELDS = [
+  { field: 'serialNo', label: 'serial number' },
+  { field: 'ipAddress', label: 'IP address' },
+  { field: 'macAddress', label: 'MAC address' }
+];
 const LIST_FILTER_COLUMNS = [
   'country',
   'location',
@@ -592,11 +597,77 @@ function getMissingRequiredFields(asset) {
   return REQUIRED_CREATE_FIELDS.filter((field) => isMissing(asset[field]));
 }
 
+function normalizeUniqueAssetValue(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : value;
+}
+
+function getUniqueAssetFieldValues(asset) {
+  return UNIQUE_ASSET_FIELDS.reduce((values, { field, label }) => {
+    if (!isMissing(asset[field])) {
+      values.push({
+        field,
+        label,
+        value: normalizeUniqueAssetValue(asset[field])
+      });
+    }
+
+    return values;
+  }, []);
+}
+
+function buildDuplicateAssetMessage(duplicate) {
+  return `Asset already exists with this ${duplicate.label}`;
+}
+
+async function findDuplicateAssetField(db, tenantId, asset, excludeAssetId = null) {
+  const uniqueValues = getUniqueAssetFieldValues(asset);
+
+  if (!uniqueValues.length) {
+    return null;
+  }
+
+  const conditions = [];
+  const params = [tenantId];
+
+  for (const { field, value } of uniqueValues) {
+    conditions.push(`LOWER(TRIM(${field})) = ?`);
+    params.push(value);
+  }
+
+  if (excludeAssetId) {
+    params.push(excludeAssetId);
+  }
+
+  const [rows] = await db.query(
+    `
+      SELECT id, ${UNIQUE_ASSET_FIELDS.map(({ field }) => field).join(', ')}
+      FROM assets
+      WHERE tenantId = ?
+        AND isActive = TRUE
+        AND (${conditions.join(' OR ')})
+        ${excludeAssetId ? 'AND id <> ?' : ''}
+      LIMIT 1
+    `,
+    params
+  );
+
+  if (!rows.length) {
+    return null;
+  }
+
+  const duplicate = rows[0];
+
+  return uniqueValues.find(({ field, value }) => (
+    !isMissing(duplicate[field])
+    && normalizeUniqueAssetValue(duplicate[field]) === value
+  )) || null;
+}
+
 function sendDatabaseError(res, error, action) {
   if (error.code === 'ER_DUP_ENTRY') {
     return res.status(409).json({
       success: false,
-      message: 'Asset already exists with this serialNo or assetTag'
+      message: 'Asset already exists with this assetTag, serial number, IP address, or MAC address'
     });
   }
 
@@ -728,6 +799,18 @@ router.post('/upload', async (req, res) => {
         continue;
       }
 
+      const duplicate = await findDuplicateAssetField(db, req.user.tenantId, asset);
+
+      if (duplicate) {
+        failedRows += 1;
+        logs.push({
+          row: rowNumber,
+          type: 'error',
+          message: buildDuplicateAssetMessage(duplicate)
+        });
+        continue;
+      }
+
       try {
         await db.query(
           insertSql,
@@ -741,7 +824,7 @@ router.post('/upload', async (req, res) => {
           row: rowNumber,
           type: 'error',
           message: error.code === 'ER_DUP_ENTRY'
-            ? 'Asset already exists with this serialNo or assetTag'
+            ? 'Asset already exists with this assetTag, serial number, IP address, or MAC address'
             : error.message
         });
       }
@@ -890,6 +973,15 @@ router.post('/create', async (req, res) => {
       });
     }
 
+    const duplicate = await findDuplicateAssetField(db, req.user.tenantId, asset);
+
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        message: buildDuplicateAssetMessage(duplicate)
+      });
+    }
+
     const placeholders = INSERT_COLUMNS.map(() => '?').join(', ');
     const insertSql = `
       INSERT INTO assets (${INSERT_COLUMNS.join(', ')})
@@ -962,9 +1054,19 @@ router.put('/:id', async (req, res) => {
       });
     }
 
+    const db = pool.promise();
+    const duplicate = await findDuplicateAssetField(db, req.user.tenantId, asset, req.params.id);
+
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        message: buildDuplicateAssetMessage(duplicate)
+      });
+    }
+
     const setSql = updateFields.map((field) => `${field} = ?`).join(', ');
     const updateSql = `UPDATE assets SET ${setSql} WHERE id = ? AND tenantId = ? AND isActive = TRUE`;
-    const [result] = await pool.promise().query(
+    const [result] = await db.query(
       updateSql,
       [...updateFields.map((field) => asset[field]), req.params.id, req.user.tenantId]
     );
@@ -976,7 +1078,7 @@ router.put('/:id', async (req, res) => {
       });
     }
 
-    const [rows] = await pool.promise().query(
+    const [rows] = await db.query(
       `SELECT ${ASSET_COLUMNS.join(', ')} FROM assets WHERE id = ? AND tenantId = ? AND isActive = TRUE LIMIT 1`,
       [req.params.id, req.user.tenantId]
     );

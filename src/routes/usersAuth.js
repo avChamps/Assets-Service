@@ -707,7 +707,7 @@ router.post('/login-generate-otp', async (req, res) => {
 
       return res.status(401).json({
         success: false,
-        message: 'Invalid credentials'
+        message: 'User not found with this email'
       });
     }
 

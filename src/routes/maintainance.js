@@ -8,8 +8,8 @@ const router = express.Router();
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
-const VALID_STATUSES = new Set(['working', 'not working']);
-const VALID_ACTIONS = new Set(['verified', 'not verified']);
+const VALID_STATUSES = new Set(['working', 'not working', 'pending']);
+const VALID_ACTIONS = new Set(['verified', 'not verified', 'pending']);
 const ASSET_COLUMNS = [
   'id',
   'tenantId',
@@ -163,11 +163,11 @@ function validateMaintenanceItem(item, index, fallbackUserId) {
   }
 
   if (!status) {
-    return { error: `items[${index}].status must be working or not working` };
+    return { error: `items[${index}].status must be working, not working, or pending` };
   }
 
   if (!action) {
-    return { error: `items[${index}].action must be verified or not verified` };
+    return { error: `items[${index}].action must be verified, not verified, or pending` };
   }
 
   return {
@@ -444,14 +444,14 @@ async function listMaintenanceRecords(req, res) {
     if (req.query.status && !validateStatus(req.query.status)) {
       return res.status(400).json({
         success: false,
-        message: 'status must be working or not working'
+        message: 'status must be working, not working, or pending'
       });
     }
 
     if (req.query.action && !validateAction(req.query.action)) {
       return res.status(400).json({
         success: false,
-        message: 'action must be verified or not verified'
+        message: 'action must be verified, not verified, or pending'
       });
     }
 
@@ -543,7 +543,7 @@ router.put('/:id', async (req, res) => {
       if (!status) {
         return res.status(400).json({
           success: false,
-          message: 'status must be working or not working'
+          message: 'status must be working, not working, or pending'
         });
       }
 
@@ -557,7 +557,7 @@ router.put('/:id', async (req, res) => {
       if (!action) {
         return res.status(400).json({
           success: false,
-          message: 'action must be verified or not verified'
+          message: 'action must be verified, not verified, or pending'
         });
       }
 

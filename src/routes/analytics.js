@@ -105,7 +105,7 @@ function buildCards(stats) {
         key: 'maintenance',
         title: 'Maintenance',
         value: stats.assets.maintenance,
-        description: 'Open work orders'
+        description: 'Maintenance records'
       },
       {
         key: 'expiringWarranties',
@@ -268,12 +268,18 @@ router.get('/', async (req, res) => {
       FROM retiredInvertory
       WHERE tenantId = ?
     `;
+    const maintenanceSql = `
+      SELECT COUNT(*) AS maintenance
+      FROM maintainance
+      WHERE tenantId = ?
+    `;
 
-    const [[assetRows], [userRows], [ticketRows], [retiredRows], amcValue] = await Promise.all([
+    const [[assetRows], [userRows], [ticketRows], [retiredRows], [maintenanceRows], amcValue] = await Promise.all([
       db.query(assetsSql, [alertWindowDays, tenantId]),
       db.query(usersSql, [tenantId]),
       db.query(ticketsSql, [tenantId]),
       db.query(retiredInventorySql, [tenantId]),
+      db.query(maintenanceSql, [tenantId]),
       getTenantAmcValue(db, tenantId)
     ]);
 
@@ -281,7 +287,7 @@ router.get('/', async (req, res) => {
       assets: {
         total: numberValue(assetRows[0], 'totalAssets'),
         allocated: numberValue(assetRows[0], 'allocatedAssets'),
-        maintenance: 0,
+        maintenance: numberValue(maintenanceRows[0], 'maintenance'),
         expiringWarranties: numberValue(assetRows[0], 'expiringWarranties')
       },
       assetValue: {

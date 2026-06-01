@@ -49,6 +49,14 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function logOtpForDevelopment(email, otp, purpose) {
+  if (process.env.NODE_ENV === 'production' || process.env.LOG_OTP_TO_CONSOLE !== 'true') {
+    return;
+  }
+
+  console.log(`[OTP] ${purpose} for ${email}: ${otp}`);
+}
+
 async function sendForgotMail(email, otp) {
   const emailConfig = getEmailConfig();
   const loginUrl = escapeHtml(process.env.APP_LOGIN_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/login');
@@ -757,6 +765,7 @@ router.post('/login-generate-otp', async (req, res) => {
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     await sendForgotMail(user.workEmail, otp);
+    logOtpForDevelopment(user.workEmail, otp, 'login');
 
     const otpToken = jwt.sign(
       {
@@ -958,6 +967,7 @@ router.post('/forgot-password-generate-otp', async (req, res) => {
     const user = rows[0];
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     await sendForgotMail(user.workEmail, otp);
+    logOtpForDevelopment(user.workEmail, otp, 'forgot-password');
 
     const otpToken = jwt.sign(
       {

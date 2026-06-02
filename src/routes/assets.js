@@ -127,6 +127,14 @@ const LIST_FILTER_COLUMNS = [
   'make',
   'assetType'
 ];
+const FILTER_OPTION_COLUMNS = [
+  { key: 'countries', column: 'country' },
+  { key: 'locations', column: 'location' },
+  { key: 'buildings', column: 'building' },
+  { key: 'rooms', column: 'roomName' },
+  { key: 'makes', column: 'make' },
+  { key: 'assetTypes', column: 'assetType' }
+];
 const LIST_SEARCH_COLUMNS = [
   'assetTag',
   'assetName',
@@ -565,6 +573,19 @@ function buildListFilters(query, tenantId) {
   };
 }
 
+function buildFilterOptions(rows) {
+  const filterOptions = FILTER_OPTION_COLUMNS.reduce((options, { key }) => {
+    options[key] = [];
+    return options;
+  }, {});
+
+  for (const row of rows) {
+    filterOptions[row.optionGroup].push(row.value);
+  }
+
+  return filterOptions;
+}
+
 function buildInsertAsset(body) {
   const asset = {
     id: uuidv4(),
@@ -704,13 +725,28 @@ router.get('/list', async (req, res) => {
       FROM assets
       WHERE tenantId = ? AND isActive = TRUE
     `;
+    const filterOptionsSql = `
+      ${FILTER_OPTION_COLUMNS.map(({ column }) => `
+        SELECT ? AS optionGroup, TRIM(${column}) AS value
+        FROM assets
+        WHERE tenantId = ?
+          AND isActive = TRUE
+          AND ${column} IS NOT NULL
+          AND TRIM(${column}) <> ''
+        GROUP BY TRIM(${column})
+      `).join(' UNION ALL ')}
+      ORDER BY optionGroup ASC, value ASC
+    `;
+    const filterOptionsParams = FILTER_OPTION_COLUMNS.flatMap(({ key }) => [key, tenantId]);
 
-    const [[countRows], [totalAssetsValueRows]] = await Promise.all([
+    const [[countRows], [totalAssetsValueRows], [filterOptionRows]] = await Promise.all([
       db.query(countSql, params),
-      db.query(totalAssetsValueSql, [tenantId])
+      db.query(totalAssetsValueSql, [tenantId]),
+      db.query(filterOptionsSql, filterOptionsParams)
     ]);
     const totalRecords = countRows[0]?.total || 0;
     const totalAssetsValue = Number(totalAssetsValueRows[0]?.totalAssetsValue || 0);
+    const filterOptions = buildFilterOptions(filterOptionRows);
     const totalPages = Math.ceil(totalRecords / limit);
 
     const listSql = `
@@ -728,6 +764,7 @@ router.get('/list', async (req, res) => {
       message: 'Assets fetched successfully',
       data: assets,
       totalAssetsValue,
+      filterOptions,
       pagination: {
         page,
         limit,

@@ -86,6 +86,33 @@ function calculateAmcValue(totalAssetValue, amcValue) {
   return Number(((total * percentage) / 100).toFixed(2));
 }
 
+function getWarrantyDateSql() {
+  const normalizedWarrantySql = 'LOWER(TRIM(warranty))';
+  const parsedWarrantyDateSql = `
+    COALESCE(
+      STR_TO_DATE(NULLIF(warranty, ''), '%Y-%m-%d'),
+      STR_TO_DATE(NULLIF(warranty, ''), '%d-%m-%Y'),
+      STR_TO_DATE(NULLIF(warranty, ''), '%m/%d/%Y'),
+      STR_TO_DATE(NULLIF(warranty, ''), '%d/%m/%Y'),
+      STR_TO_DATE(NULLIF(warranty, ''), '%d %b %Y'),
+      STR_TO_DATE(NULLIF(warranty, ''), '%d %M %Y')
+    )
+  `;
+
+  return `
+    COALESCE(
+      ${parsedWarrantyDateSql},
+      CASE
+        WHEN ${normalizedWarrantySql} REGEXP '^[0-9]+[[:space:]-]*(year|years|yr|yrs)$' THEN DATE_ADD(DATE(createdAt), INTERVAL CAST(warranty AS UNSIGNED) YEAR)
+        WHEN ${normalizedWarrantySql} REGEXP '^[0-9]+[[:space:]-]*(month|months|mo|mos)$' THEN DATE_ADD(DATE(createdAt), INTERVAL CAST(warranty AS UNSIGNED) MONTH)
+        WHEN ${normalizedWarrantySql} REGEXP '^[0-9]+[[:space:]-]*(day|days)$' THEN DATE_ADD(DATE(createdAt), INTERVAL CAST(warranty AS UNSIGNED) DAY)
+        WHEN ${normalizedWarrantySql} REGEXP '^(expired|out[[:space:]]*of[[:space:]]*warranty|outofwarranty)$' THEN DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+        ELSE NULL
+      END
+    )
+  `;
+}
+
 function buildCards(stats) {
   return {
     totalAvAssets: [
@@ -211,14 +238,7 @@ router.get('/', async (req, res) => {
     const alertWindowDays = parseAlertWindowDays(req.query.alertWindowDays);
     const { tenantId } = req.user;
     const db = pool.promise();
-    const warrantyDateSql = `
-      COALESCE(
-        STR_TO_DATE(NULLIF(warranty, ''), '%Y-%m-%d'),
-        STR_TO_DATE(NULLIF(warranty, ''), '%d-%m-%Y'),
-        STR_TO_DATE(NULLIF(warranty, ''), '%m/%d/%Y'),
-        STR_TO_DATE(NULLIF(warranty, ''), '%d/%m/%Y')
-      )
-    `;
+    const warrantyDateSql = getWarrantyDateSql();
 
     const assetsSql = `
       SELECT

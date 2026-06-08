@@ -10,6 +10,12 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const VALID_STATUSES = new Set(['working', 'not working', 'pending']);
 const VALID_ACTIONS = new Set(['verified', 'not verified', 'pending']);
+const VALID_MAINTENANCE_TYPES = new Map([
+  ['break-fix', 'Break-Fix'],
+  ['software/firmware upgrade', 'Software/Firmware upgrade'],
+  ['general check', 'General Check'],
+  ['system upgrade', 'System Upgrade']
+]);
 const ASSET_COLUMNS = [
   'id',
   'tenantId',
@@ -148,11 +154,33 @@ function validateAction(action) {
   return normalized;
 }
 
+function validateMaintenanceType(maintenanceType) {
+  const normalized = normalizeValue(maintenanceType);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return VALID_MAINTENANCE_TYPES.get(normalized) || null;
+}
+
+function getMaintenanceType(item) {
+  return item?.maintenanceType ?? item?.maintenance_type;
+}
+
+function maintenanceTypeMessage(field = 'maintenanceType') {
+  return `${field} must be Break-Fix, Software/Firmware upgrade, General Check, or System Upgrade`;
+}
+
 function validateMaintenanceItem(item, index, fallbackUserId) {
   const assetId = cleanText(item?.assetId);
   const userId = cleanText(item?.userId) || fallbackUserId;
   const status = validateStatus(item?.status);
   const action = validateAction(item?.action);
+  const rawMaintenanceType = getMaintenanceType(item);
+  const maintenanceType = rawMaintenanceType === undefined || rawMaintenanceType === null || cleanText(rawMaintenanceType) === ''
+    ? null
+    : validateMaintenanceType(rawMaintenanceType);
 
   if (!assetId) {
     return { error: `items[${index}].assetId is required` };
@@ -170,12 +198,17 @@ function validateMaintenanceItem(item, index, fallbackUserId) {
     return { error: `items[${index}].action must be verified, not verified, or pending` };
   }
 
+  if (rawMaintenanceType !== undefined && rawMaintenanceType !== null && cleanText(rawMaintenanceType) !== '' && !maintenanceType) {
+    return { error: `items[${index}].${maintenanceTypeMessage()}` };
+  }
+
   return {
     value: {
       userId,
       assetId,
       status,
-      action
+      action,
+      maintenanceType
     }
   };
 }
@@ -183,12 +216,19 @@ function validateMaintenanceItem(item, index, fallbackUserId) {
 function buildListFilters(query, tenantId) {
   const conditions = ['m.tenantId = ?'];
   const params = [tenantId];
-  const filterColumns = ['userId', 'assetId', 'status', 'action'];
+  const filterColumns = ['userId', 'assetId', 'status', 'action', 'maintenanceType'];
 
   for (const column of filterColumns) {
-    const value = column === 'status' || column === 'action'
-      ? normalizeValue(query[column])
-      : cleanText(query[column]);
+    let value;
+
+    if (column === 'status' || column === 'action') {
+      value = normalizeValue(query[column]);
+    } else if (column === 'maintenanceType') {
+      const rawMaintenanceType = query.maintenanceType ?? query.maintenance_type;
+      value = rawMaintenanceType ? validateMaintenanceType(rawMaintenanceType) : '';
+    } else {
+      value = cleanText(query[column]);
+    }
 
     if (value) {
       conditions.push(`m.${column} = ?`);
@@ -201,6 +241,7 @@ function buildListFilters(query, tenantId) {
     const searchConditions = [
       'm.assetId LIKE ?',
       'm.userId LIKE ?',
+      'm.maintenanceType LIKE ?',
       'u.fullName LIKE ?',
       'u.workEmail LIKE ?',
       ...ASSET_SEARCH_COLUMNS.map((column) => `a.${column} LIKE ?`)
@@ -235,6 +276,7 @@ function mapMaintenanceRow(row) {
     assetId: row.assetId,
     status: row.status,
     action: row.action,
+    maintenanceType: row.maintenanceType,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     user: row.userId
@@ -294,6 +336,7 @@ async function getMaintenanceById(db, id, tenantId) {
         m.assetId,
         m.status,
         m.action,
+        m.maintenanceType,
         m.createdAt,
         m.updatedAt,
         u.fullName,
@@ -380,11 +423,12 @@ router.post('/', async (req, res) => {
       item.userId,
       item.assetId,
       item.status,
-      item.action
+      item.action,
+      item.maintenanceType
     ]);
     const [result] = await connection.query(
       `
-        INSERT INTO maintainance (tenantId, userId, assetId, status, action)
+        INSERT INTO maintainance (tenantId, userId, assetId, status, action, maintenanceType)
         VALUES ?
       `,
       [values]
@@ -455,6 +499,13 @@ async function listMaintenanceRecords(req, res) {
       });
     }
 
+    if ((req.query.maintenanceType || req.query.maintenance_type) && !validateMaintenanceType(req.query.maintenanceType ?? req.query.maintenance_type)) {
+      return res.status(400).json({
+        success: false,
+        message: maintenanceTypeMessage()
+      });
+    }
+
     const page = parsePositiveInteger(req.query.page, DEFAULT_PAGE);
     const requestedLimit = parsePositiveInteger(req.query.limit, DEFAULT_LIMIT);
     const limit = Math.min(requestedLimit, MAX_LIMIT);
@@ -476,6 +527,7 @@ async function listMaintenanceRecords(req, res) {
         m.assetId,
         m.status,
         m.action,
+        m.maintenanceType,
         m.createdAt,
         m.updatedAt,
         u.fullName,
@@ -565,10 +617,27 @@ router.put('/:id', async (req, res) => {
       values.push(action);
     }
 
+    if (req.body.maintenanceType !== undefined || req.body.maintenance_type !== undefined) {
+      const rawMaintenanceType = req.body.maintenanceType ?? req.body.maintenance_type;
+      const maintenanceType = cleanText(rawMaintenanceType) === ''
+        ? null
+        : validateMaintenanceType(rawMaintenanceType);
+
+      if (cleanText(rawMaintenanceType) !== '' && !maintenanceType) {
+        return res.status(400).json({
+          success: false,
+          message: maintenanceTypeMessage()
+        });
+      }
+
+      updates.push('maintenanceType = ?');
+      values.push(maintenanceType);
+    }
+
     if (!updates.length) {
       return res.status(400).json({
         success: false,
-        message: 'Provide status or action to update'
+        message: 'Provide status, action, or maintenanceType to update'
       });
     }
 

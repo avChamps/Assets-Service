@@ -34,6 +34,7 @@ const REPORT_EXPORT_FLAG_ALIASES = new Map([
   ['toproomshighvalue', 'topRoomsHighValue'],
   ['roomshighvalue', 'topRoomsHighValue']
 ]);
+const ACTIVE_TICKET_ISSUE_STATUSES = "'Opened', 'Pending', 'In Progress'";
 const BASIC_ASSET_EXPORT_COLUMNS = [
   { header: 'Asset ID', key: 'id' },
   { header: 'Asset Tag', key: 'assetTag' },
@@ -187,6 +188,7 @@ function getWarrantyDateSql(alias = 'a') {
   const prefix = alias ? `${alias}.` : '';
   const warranty = `${prefix}warranty`;
   const createdAt = `${prefix}createdAt`;
+  const normalizedWarrantySql = `LOWER(TRIM(${warranty}))`;
   const parsedWarrantyDateSql = `
     COALESCE(
       STR_TO_DATE(NULLIF(${warranty}, ''), '%Y-%m-%d'),
@@ -202,9 +204,10 @@ function getWarrantyDateSql(alias = 'a') {
     COALESCE(
       ${parsedWarrantyDateSql},
       CASE
-        WHEN ${warranty} REGEXP '^[0-9]+[[:space:]]*Year' THEN DATE_ADD(DATE(${createdAt}), INTERVAL CAST(${warranty} AS UNSIGNED) YEAR)
-        WHEN ${warranty} REGEXP '^[0-9]+[[:space:]]*Month' THEN DATE_ADD(DATE(${createdAt}), INTERVAL CAST(${warranty} AS UNSIGNED) MONTH)
-        WHEN ${warranty} REGEXP '^[0-9]+[[:space:]]*Day' THEN DATE_ADD(DATE(${createdAt}), INTERVAL CAST(${warranty} AS UNSIGNED) DAY)
+        WHEN ${normalizedWarrantySql} REGEXP '^[0-9]+[[:space:]-]*(year|years|yr|yrs)$' THEN DATE_ADD(DATE(${createdAt}), INTERVAL CAST(${warranty} AS UNSIGNED) YEAR)
+        WHEN ${normalizedWarrantySql} REGEXP '^[0-9]+[[:space:]-]*(month|months|mo|mos)$' THEN DATE_ADD(DATE(${createdAt}), INTERVAL CAST(${warranty} AS UNSIGNED) MONTH)
+        WHEN ${normalizedWarrantySql} REGEXP '^[0-9]+[[:space:]-]*(day|days)$' THEN DATE_ADD(DATE(${createdAt}), INTERVAL CAST(${warranty} AS UNSIGNED) DAY)
+        WHEN ${normalizedWarrantySql} REGEXP '^(expired|out[[:space:]]*of[[:space:]]*warranty|outofwarranty)$' THEN DATE_SUB(CURDATE(), INTERVAL 1 DAY)
         ELSE NULL
       END
     )
@@ -750,9 +753,9 @@ router.get('/export/csv', async (req, res) => {
         `
           SELECT
             ${getBasicAssetSelect('a')},
-            COUNT(DISTINCT t.id) AS tickets,
+            COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) AS tickets,
             CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END AS warrantyIssue,
-            COUNT(DISTINCT t.id) + CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END AS totalIssues
+            COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) + CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END AS totalIssues
           FROM assets a
           LEFT JOIN tickts t ON t.assetId = a.id AND t.tenantId = a.tenantId${ticketJoinDateFilters.joinSql}
           ${exportFilters.whereSql}
@@ -916,9 +919,9 @@ router.get('/', async (req, res) => {
       SELECT
         COALESCE(NULLIF(TRIM(a.roomName), ''), 'Not Specified') AS roomName,
         0 AS maintenance,
-        COUNT(DISTINCT t.id) AS tickets,
+        COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) AS tickets,
         COUNT(DISTINCT CASE WHEN ${warrantyDateSql} < CURDATE() THEN a.id END) AS warranty,
-        COUNT(DISTINCT t.id) + COUNT(DISTINCT CASE WHEN ${warrantyDateSql} < CURDATE() THEN a.id END) AS totalIssues
+        COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) + COUNT(DISTINCT CASE WHEN ${warrantyDateSql} < CURDATE() THEN a.id END) AS totalIssues
       FROM assets a
       LEFT JOIN tickts t ON t.assetId = a.id AND t.tenantId = a.tenantId${ticketJoinDateFilters.joinSql}
       ${assetFilters.whereSql}

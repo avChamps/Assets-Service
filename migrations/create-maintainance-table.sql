@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS maintainance (
   assetId VARCHAR(36) NOT NULL,
   status ENUM('working', 'not working', 'pending') NOT NULL,
   action ENUM('verified', 'not verified', 'pending') NOT NULL DEFAULT 'not verified',
+  maintenanceType ENUM('Break-Fix', 'Software/Firmware upgrade', 'General Check', 'System Upgrade') NULL DEFAULT NULL,
   createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -12,6 +13,7 @@ CREATE TABLE IF NOT EXISTS maintainance (
   KEY idx_maintainance_tenant_asset (tenantId, assetId),
   KEY idx_maintainance_user_createdAt (userId, createdAt),
   KEY idx_maintainance_status_action (status, action),
+  KEY idx_maintainance_type (maintenanceType),
   CONSTRAINT fk_maintainance_tenant
     FOREIGN KEY (tenantId) REFERENCES tenants (tenantId)
     ON DELETE CASCADE,

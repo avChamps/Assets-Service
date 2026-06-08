@@ -16,6 +16,9 @@ const ALLOWED_OPERATIONS = new Set([
   'DESCRIBE',
   'SHOW',
   'SET',
+  'PREPARE',
+  'EXECUTE',
+  'DEALLOCATE'
 ]);
 
 function normalizeSql(sql) {

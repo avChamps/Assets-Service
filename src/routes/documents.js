@@ -171,7 +171,7 @@ async function getDocumentImages(req, res) {
     d.id,
     d.userId,
     d.tenantId,
-    d.fileName,
+    d.filename AS fileName,
     d.imageUrl,
     d.documentId,
     d.type,
@@ -251,7 +251,7 @@ router.post('/upload', async (req, res) => {
        INSERT INTO documents (
   userId,
   tenantId,
-  fileName,
+  filename,
   imageUrl,
   documentId,
   type,
@@ -272,7 +272,7 @@ router.post('/upload', async (req, res) => {
     const [rows] = await pool.promise().query(
       `
         SELECT
-          d.id, d.userId, d.tenantId, d.filename, d.imageUrl, d.documentId, d.type,
+          d.id, d.userId, d.tenantId, d.filename AS fileName, d.imageUrl, d.documentId, d.type,
           d.uploadedBy AS uploadedById,
           COALESCE(u.fullName, d.uploadedBy) AS uploadedBy,
           d.uploadedAt

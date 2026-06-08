@@ -1,3 +1,2 @@
-subscription
-userAuth.js
-reports.js
+file-upload.js - config
+routes 

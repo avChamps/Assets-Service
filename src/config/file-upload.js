@@ -40,6 +40,7 @@ async function uploadToVPS(localPath, remoteFilename, folder = 'Product-Images')
   const remoteDir = path.posix.join(rootDir, targetFolder);
   const remotePath = path.posix.join(remoteDir, safeFilename);
   const publicPath = path.posix.join(publicBasePath, targetFolder, safeFilename);
+  let connected = false;
 
   try {
     await sftp.connect({
@@ -48,6 +49,7 @@ async function uploadToVPS(localPath, remoteFilename, folder = 'Product-Images')
       username: getRequiredEnv('VPS_SFTP_USERNAME'),
       password: getRequiredEnv('VPS_SFTP_PASSWORD')
     });
+    connected = true;
 
     await sftp.mkdir(remoteDir, true);
     await sftp.put(localPath, remotePath);
@@ -58,9 +60,15 @@ async function uploadToVPS(localPath, remoteFilename, folder = 'Product-Images')
       throw new Error('SFTP authentication failed. Check VPS_SFTP_USERNAME and VPS_SFTP_PASSWORD.');
     }
 
-    throw error;
+    const detail = error.message && error.message.trim()
+      ? error.message
+      : 'No error detail returned by the SFTP client';
+
+    throw new Error(`SFTP upload failed: ${detail}`);
   } finally {
-    await sftp.end();
+    if (connected) {
+      await sftp.end().catch(() => {});
+    }
   }
 }
 

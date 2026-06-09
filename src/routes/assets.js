@@ -125,7 +125,9 @@ const LIST_FILTER_COLUMNS = [
   'building',
   'roomName',
   'make',
-  'assetType'
+  'assetType',
+  'poNumber',
+  'invoiceNumber'
 ];
 const FILTER_OPTION_COLUMNS = [
   { key: 'countries', column: 'country' },
@@ -142,8 +144,13 @@ const LIST_SEARCH_COLUMNS = [
   'make',
   'model',
   'serialNo',
-  'roomName'
+  'roomName',
+  'ipAddress',
+  'macAddress',
+  'poNumber',
+  'invoiceNumber'
 ];
+
 const FILE_IGNORED_COLUMNS = new Set(['id', 'tenantId', 'assetTag', 'isActive', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt']);
 const FILE_IMPORT_COLUMNS = INSERT_COLUMNS.filter((column) => !FILE_IGNORED_COLUMNS.has(column));
 const CSV_HEADER_MAP = new Map(
@@ -561,7 +568,9 @@ function buildListFilters(query, tenantId) {
   }
 
   if (!isMissing(search)) {
-    const searchConditions = LIST_SEARCH_COLUMNS.map((column) => `${column} LIKE ?`);
+  const searchConditions = LIST_SEARCH_COLUMNS.map(
+    (column) => `TRIM(${column}) LIKE ?`
+  );
 
     conditions.push(`(${searchConditions.join(' OR ')})`);
     params.push(...LIST_SEARCH_COLUMNS.map(() => `%${search}%`));

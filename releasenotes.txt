@@ -1,2 +1,1 @@
-file-upload.js - config
-routes 
+assets.js

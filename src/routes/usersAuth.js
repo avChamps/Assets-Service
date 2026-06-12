@@ -680,6 +680,7 @@ router.post('/login-generate-otp', async (req, res) => {
         u.password,
         u.role,
         u.isAdmin,
+        u.isWebsiteAdmin,
         u.status,
         u.jobTitle,
         u.location,
@@ -775,6 +776,7 @@ router.post('/login-generate-otp', async (req, res) => {
         workEmail: user.workEmail,
         role: user.role,
         isAdmin: toBoolean(user.isAdmin),
+        isWebsiteAdmin: toBoolean(user.isWebsiteAdmin),
         companyName: user.companyName || null,
         companyDomain: user.companyDomain || null,
         companySize: user.companySize || null,
@@ -812,6 +814,7 @@ router.post('/login-generate-otp', async (req, res) => {
         workEmail: user.workEmail,
         role: user.role,
         isAdmin: toBoolean(user.isAdmin),
+        isWebsiteAdmin: toBoolean(user.isWebsiteAdmin),
         companyName: user.companyName || null,
         companyDomain: user.companyDomain || null,
         companySize: user.companySize || null,
@@ -878,7 +881,8 @@ router.post('/verify-login-otp', async (req, res) => {
         tenantId: decoded.tenantId,
         workEmail: decoded.workEmail,
         role: decoded.role,
-        isAdmin: toBoolean(decoded.isAdmin)
+        isAdmin: toBoolean(decoded.isAdmin),
+        isWebsiteAdmin: toBoolean(decoded.isWebsiteAdmin)
       },
       getJwtSecret(),
       { expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
@@ -919,6 +923,7 @@ router.post('/verify-login-otp', async (req, res) => {
         workEmail: decoded.workEmail,
         role: decoded.role,
         isAdmin: toBoolean(decoded.isAdmin),
+        isWebsiteAdmin: toBoolean(decoded.isWebsiteAdmin),
         companyName: decoded.companyName,
         companyDomain: decoded.companyDomain,
         companySize: decoded.companySize,

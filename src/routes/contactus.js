@@ -72,6 +72,8 @@ function authenticateToken(req, res, next) {
 
 router.use(authenticateToken);
 
+const CONTACT_ADMIN_RECIPIENTS = ['avchamps1@gmail.com', 'support@assetsystems.org'];
+
 async function sendContactThankYouMail(contact) {
   const emailConfig = getEmailConfig();
   const transporter = nm.createTransport({
@@ -153,6 +155,131 @@ async function sendContactThankYouMail(contact) {
     from: emailConfig.user,
     to: contact.emailId,
     subject: 'Thank you for contacting Asset Systems',
+    html: htmlContent
+  });
+}
+
+async function sendContactAdminMail(contact) {
+  const emailConfig = getEmailConfig();
+  const transporter = nm.createTransport({
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: {
+      user: emailConfig.user,
+      pass: emailConfig.password
+    }
+  });
+
+  const safeRequestId = escapeHtml(contact.id || 'N/A');
+  const safeTenantName = escapeHtml(contact.tenantName || 'N/A');
+  const safeUserName = escapeHtml(contact.userName || 'N/A');
+  const safeDuration = escapeHtml(contact.duration || 'N/A');
+  const safeSubscriptionType = escapeHtml(contact.subscriptionType || 'N/A');
+  const safeFullName = escapeHtml(contact.fullName || 'N/A');
+  const safeEmailId = escapeHtml(contact.emailId || 'N/A');
+  const safeMobileNumber = escapeHtml(contact.mobileNumber || 'N/A');
+  const safeCompanyName = escapeHtml(contact.companyName || 'N/A');
+  const safeMessage = escapeHtml(contact.message || 'N/A');
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>New Contact Request Received</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #eef1f5;">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background-color: #eef1f5;">
+        <tr>
+          <td align="center" style="padding: 20px 8px;">
+            <table width="600" border="0" cellpadding="0" cellspacing="0" style="width: 100%; max-width: 600px; background-color: #ffffff; border: 1px solid #d5dbe5;">
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 58px 24px 52px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                  <div style="font-size: 0; line-height: 0; margin-bottom: 16px;">
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                    <span style="display: inline-block; width: 32px; color: #ffffff; font-size: 22px; line-height: 22px; vertical-align: middle;">&#9993;</span>
+                    <span style="display: inline-block; width: 52px; height: 1px; background-color: #ffffff; vertical-align: middle;"></span>
+                  </div>
+                  <p style="margin: 0 0 10px; font-size: 11px; line-height: 1.2; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase;">Contact Request</p>
+                  <h1 style="margin: 0; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 34px; line-height: 1.12; font-weight: 700; color: #ffffff;">New Contact Request Received</h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 52px 48px 48px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.85; font-weight: 400;">
+                  <p style="margin: 0 0 18px; font-size: 15px; font-weight: 700; color: #101828;">Hello Team,</p>
+                  <p style="margin: 0 0 22px;">A new contact request has been submitted from Asset Systems. Please review the details below and follow up with the customer.</p>
+
+                  <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin: 0 0 32px; color: #253858; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.6;">
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Request ID</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeRequestId}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Tenant Name</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeTenantName}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">User Name</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeUserName}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Duration</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeDuration}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Subscription Type</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeSubscriptionType}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Contact Person</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeFullName}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Email</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeEmailId}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Mobile</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeMobileNumber}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Company</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeCompanyName}</td>
+                    </tr>
+                    <tr>
+                      <td style="width: 170px; padding: 10px 12px; border: 1px solid #d5dbe5; background-color: #f6f8fb; font-weight: 700;">Message</td>
+                      <td style="padding: 10px 12px; border: 1px solid #d5dbe5;">${safeMessage}</td>
+                    </tr>
+                  </table>
+
+                  <p style="margin: 0;">Regards,<br><strong>Asset Systems Notification</strong></p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #eef1f5; padding: 34px 24px 32px; color: #53657d; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.8;">
+                  <p style="margin: 0 0 8px; color: #1f5cff; font-size: 13px; font-weight: 700;">Get in touch</p>
+                  <p style="margin: 0;">+91-9966416417<br>support@assetsystems.org</p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="background-color: #3f5ed7; padding: 18px 20px; color: #ffffff; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 10px; line-height: 1.4; font-weight: 700;">
+                  @2026, All Rihts reserved
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  return transporter.sendMail({
+    from: emailConfig.user,
+    to: CONTACT_ADMIN_RECIPIENTS,
+    subject: `New contact request from ${contact.companyName || contact.fullName || 'Asset Systems'}`,
     html: htmlContent
   });
 }
@@ -285,8 +412,13 @@ router.post('/', async (req, res) => {
     const companyNameValue = String(companyName).trim();
     const messageValue = message ? String(message).trim() : null;
 
+    let tenantName = null;
+    let userName = null;
+
     try {
-      const { tenantName, userName } = await getTenantAndUserNames(db, tenantId, userId);
+      const names = await getTenantAndUserNames(db, tenantId, userId);
+      tenantName = names.tenantName;
+      userName = names.userName;
       const whatsappText = buildContactWhatsAppMessage({
         id: result.insertId,
         tenantName,
@@ -307,6 +439,8 @@ router.post('/', async (req, res) => {
 
     let thankYouEmailSent = false;
     let thankYouEmailError = null;
+    let adminEmailSent = false;
+    let adminEmailError = null;
 
     try {
       await sendContactThankYouMail({
@@ -324,16 +458,38 @@ router.post('/', async (req, res) => {
       console.error('Failed to send contact thank-you email:', mailError.message);
     }
 
+    try {
+      await sendContactAdminMail({
+        id: result.insertId,
+        tenantName,
+        userName,
+        duration: durationValue,
+        subscriptionType: subscriptionTypeValue,
+        fullName: fullNameValue,
+        emailId: emailIdValue,
+        mobileNumber: mobileNumberValue,
+        companyName: companyNameValue,
+        message: messageValue
+      });
+      adminEmailSent = true;
+    } catch (mailError) {
+      adminEmailError = mailError.message;
+      console.error('Failed to send contact admin email:', mailError.message);
+    }
+
     return res.status(201).json({
       success: true,
-      message: thankYouEmailError
-        ? 'Contact request submitted successfully, but thank-you email failed'
+      message: thankYouEmailError || adminEmailError
+        ? 'Contact request submitted successfully, but one or more emails failed'
         : 'Contact request submitted successfully',
       data: {
         id: result.insertId,
         thankYouEmailSent,
         thankYouEmailTo: emailIdValue,
-        thankYouEmailError
+        thankYouEmailError,
+        adminEmailSent,
+        adminEmailTo: CONTACT_ADMIN_RECIPIENTS,
+        adminEmailError
       }
     });
   } catch (error) {

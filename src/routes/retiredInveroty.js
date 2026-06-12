@@ -71,6 +71,12 @@ const ALLOWED_RETIREMENT_STATUSES = new Set([
   'Obsolete'
 ]);
 
+const RETIREMENT_STATUS_FILTER_ALIASES = {
+  endoflife: 'End Of Life',
+  readyfordisposal: 'Ready For Disposal',
+  obsolete: 'Obsolete'
+};
+
 const SEARCH_COLUMNS = [
   'r.id',
   'r.assetId',
@@ -147,6 +153,18 @@ function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : value;
 }
 
+function normalizeRetirementStatusFilter(value) {
+  const normalized = normalizeString(value);
+
+  if (isMissing(normalized)) {
+    return normalized;
+  }
+
+  const aliasKey = String(normalized).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  return RETIREMENT_STATUS_FILTER_ALIASES[aliasKey] || normalized;
+}
+
 function buildAliasedColumns(tableAlias, columns, prefix) {
   return columns.map((column) => `${tableAlias}.${column} AS ${prefix}${column}`).join(', ');
 }
@@ -173,11 +191,12 @@ function mapOptionRows(rows) {
 }
 
 function buildListFilters(query, tenantId, options = {}) {
-  const { includeAssetType = true } = options;
+  const { includeAssetType = true, includeRetirementStatus = true } = options;
   const conditions = ['r.tenantId = ?'];
   const params = [tenantId];
   const search = normalizeString(query.search);
   const assetType = normalizeString(query.assetType || query.assetTypeId);
+  const retirementStatus = normalizeRetirementStatusFilter(query.retirementStatus || query.status);
 
   if (!isMissing(search)) {
     conditions.push(`(${SEARCH_COLUMNS.map((column) => `${column} LIKE ?`).join(' OR ')})`);
@@ -189,10 +208,43 @@ function buildListFilters(query, tenantId, options = {}) {
     params.push(assetType);
   }
 
+  if (includeRetirementStatus && !isMissing(retirementStatus)) {
+    conditions.push('r.retirementStatus = ?');
+    params.push(retirementStatus);
+  }
+
   return {
     whereSql: `WHERE ${conditions.join(' AND ')}`,
     params
   };
+}
+
+function buildRetiredInventoryCounts(rows) {
+  const counts = {
+    total: 0,
+    endOfLife: 0,
+    readyForDisposal: 0,
+    obsolete: 0
+  };
+
+  const aliases = {
+    'End Of Life': 'endOfLife',
+    'Ready For Disposal': 'readyForDisposal',
+    Obsolete: 'obsolete'
+  };
+
+  for (const row of rows) {
+    const status = row.retirementStatus;
+    const count = Number(row.total || 0);
+
+    counts.total += count;
+
+    if (aliases[status]) {
+      counts[aliases[status]] = count;
+    }
+  }
+
+  return counts;
 }
 
 function escapeCsvValue(value) {
@@ -361,6 +413,10 @@ router.get('/', async (req, res) => {
       whereSql: filterOptionsWhereSql,
       params: filterOptionsParams
     } = buildListFilters(req.query, req.user.tenantId, { includeAssetType: false });
+    const {
+      whereSql: countsWhereSql,
+      params: countsParams
+    } = buildListFilters(req.query, req.user.tenantId, { includeRetirementStatus: false });
 
     const countSql = `
       SELECT COUNT(*) AS total
@@ -383,6 +439,13 @@ router.get('/', async (req, res) => {
         AND TRIM(a.assetType) <> ''
       ORDER BY value ASC
     `;
+    const retirementStatusCountsSql = `
+      SELECT r.retirementStatus, COUNT(*) AS total
+      FROM retiredInvertory r
+      LEFT JOIN assets a ON a.id = r.assetId AND a.tenantId = r.tenantId
+      ${countsWhereSql}
+      GROUP BY r.retirementStatus
+    `;
     const listSql = `
       SELECT
         ${buildAliasedColumns('r', RETIRED_INVENTORY_COLUMNS, 'retired_')},
@@ -394,19 +457,22 @@ router.get('/', async (req, res) => {
       LIMIT ? OFFSET ?
     `;
 
-    const [[countRows], [totalAssetsValueRows], [assetTypeRows], [rows]] = await Promise.all([
+    const [[countRows], [totalAssetsValueRows], [assetTypeRows], [retirementStatusCountRows], [rows]] = await Promise.all([
       db.query(countSql, params),
       db.query(totalAssetsValueSql, params),
       db.query(assetTypesSql, filterOptionsParams),
+      db.query(retirementStatusCountsSql, countsParams),
       db.query(listSql, [...params, limit, offset])
     ]);
     const totalRecords = numberValue(countRows[0], 'total');
     const totalAssetsValue = numberValue(totalAssetsValueRows[0], 'totalAssetsValue');
     const totalPages = Math.ceil(totalRecords / limit);
+    const counts = buildRetiredInventoryCounts(retirementStatusCountRows);
 
     return res.status(200).json({
       success: true,
       message: 'Retired inventory fetched successfully',
+      counts,
       data: rows.map(mapRetiredInventoryRow),
       totalAssetsValue,
       filterOptions: {

@@ -754,13 +754,13 @@ router.get('/export/csv', async (req, res) => {
           SELECT
             ${getBasicAssetSelect('a')},
             COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) AS tickets,
-            CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END AS warrantyIssue,
-            COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) + CASE WHEN ${warrantyDateSql} < CURDATE() THEN 1 ELSE 0 END AS totalIssues
+            0 AS warrantyIssue,
+            COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) AS totalIssues
           FROM assets a
           LEFT JOIN tickts t ON t.assetId = a.id AND t.tenantId = a.tenantId${ticketJoinDateFilters.joinSql}
           ${exportFilters.whereSql}
           GROUP BY a.id
-          HAVING totalIssues > 0
+          HAVING tickets > 0
           ORDER BY totalIssues DESC, a.roomName ASC, a.assetName ASC
         `,
         [...ticketJoinDateFilters.params, ...exportFilters.params]
@@ -866,17 +866,17 @@ router.get('/', async (req, res) => {
     `;
     const roomCapacitySql = `
       SELECT
-        roomName AS name,
-        roomName,
-        building,
-        location,
-        country,
+        ${paxNameSql} AS name,
+        NULL AS roomName,
+        NULL AS building,
+        NULL AS location,
+        NULL AS country,
         ${paxNameSql} AS paxName,
         roomPax AS pax,
-        1 AS rooms,
-        assets,
-        quantity,
-        roomPax AS capacity
+        COUNT(*) AS rooms,
+        COALESCE(SUM(assets), 0) AS assets,
+        COALESCE(SUM(quantity), 0) AS quantity,
+        COALESCE(SUM(roomPax), 0) AS capacity
       FROM (
         SELECT
           ${unaliasedRoomScopeSql} AS roomScope,
@@ -896,7 +896,8 @@ router.get('/', async (req, res) => {
           COALESCE(NULLIF(TRIM(building), ''), 'Not Specified'),
           COALESCE(NULLIF(TRIM(roomName), ''), 'Not Specified')
       ) roomCapacityByRoom
-      ORDER BY capacity DESC, roomName ASC
+      GROUP BY roomPax
+      ORDER BY roomPax DESC
     `;
     const deviceTypeSql = `
       SELECT
@@ -920,13 +921,13 @@ router.get('/', async (req, res) => {
         COALESCE(NULLIF(TRIM(a.roomName), ''), 'Not Specified') AS roomName,
         0 AS maintenance,
         COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) AS tickets,
-        COUNT(DISTINCT CASE WHEN ${warrantyDateSql} < CURDATE() THEN a.id END) AS warranty,
-        COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) + COUNT(DISTINCT CASE WHEN ${warrantyDateSql} < CURDATE() THEN a.id END) AS totalIssues
+        0 AS warranty,
+        COUNT(DISTINCT CASE WHEN t.status IN (${ACTIVE_TICKET_ISSUE_STATUSES}) THEN t.id END) AS totalIssues
       FROM assets a
       LEFT JOIN tickts t ON t.assetId = a.id AND t.tenantId = a.tenantId${ticketJoinDateFilters.joinSql}
       ${assetFilters.whereSql}
       GROUP BY COALESCE(NULLIF(TRIM(a.roomName), ''), 'Not Specified')
-      HAVING totalIssues > 0
+      HAVING tickets > 0
       ORDER BY totalIssues DESC, roomName ASC
       LIMIT ?
     `;
@@ -1042,7 +1043,7 @@ router.get('/', async (req, res) => {
         totalCapacity: totalRoomCapacity,
         data: roomRows.map((row) => ({
           name: row.name,
-          roomName: row.roomName || row.name,
+          roomName: row.roomName,
           building: row.building,
           location: row.location,
           country: row.country,

@@ -163,7 +163,7 @@ function buildSttsCounts(row) {
 }
 
 function buildWhereClause(query, tenantId) {
-  const conditions = ['tenantId = ?'];
+  const conditions = ['tenantId = ?', 'isActive = TRUE'];
   const params = [tenantId];
   const search = normalizeString(query.search);
   const status = normalizeString(query.status)?.toLowerCase();
@@ -276,7 +276,7 @@ router.get('/', async (req, res) => {
           END
         ) AS outOfWarranty
       FROM assets
-      WHERE tenantId = ?
+      WHERE tenantId = ? AND isActive = TRUE
     `;
     const listSql = `
       SELECT

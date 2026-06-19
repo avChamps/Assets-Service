@@ -167,7 +167,9 @@ function buildWhereClause(query, tenantId) {
   const params = [tenantId];
   const search = normalizeString(query.search);
   const status = normalizeString(query.status)?.toLowerCase();
-  const warrantyStatus = normalizeString(query.warrantyStatus)?.toLowerCase();
+  const statusWarrantyAliases = new Set(['all', 'expiringsoon', 'expiring soon', 'outofwarranty', 'out of warranty']);
+  const warrantyStatus = normalizeString(query.warrantyStatus)?.toLowerCase()
+    || (statusWarrantyAliases.has(status) ? status : undefined);
   const warrantyDateSql = getWarrantyDateSql();
   const alertWindowDays = parseAlertWindowDays(query.alertWindowDays);
 
@@ -184,7 +186,7 @@ function buildWhereClause(query, tenantId) {
     }
   }
 
-  if (!isMissing(warrantyStatus)) {
+  if (!isMissing(warrantyStatus) && warrantyStatus !== 'all') {
     if (warrantyStatus === 'expiringsoon' || warrantyStatus === 'expiring soon') {
       conditions.push(`${warrantyDateSql} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)`);
       params.push(alertWindowDays);

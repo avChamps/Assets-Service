@@ -57,6 +57,45 @@ function logOtpForDevelopment(email, otp, purpose) {
   console.log(`[OTP] ${purpose} for ${email}: ${otp}`);
 }
 
+async function getTenantAssetAccess(db, tenantId) {
+  const [rows] = await db.query(
+    `
+      SELECT
+        latest.subscriptionType,
+        sp.maxAssets,
+        (
+          SELECT COUNT(*)
+          FROM assets tenantAssets
+          WHERE tenantAssets.tenantId = ?
+            AND tenantAssets.isActive = TRUE
+        ) AS activeAssets
+      FROM (
+        SELECT
+          COALESCE((
+            SELECT s.subscriptionType
+            FROM tenantSubscriptions s
+            WHERE s.tenantId = t.tenantId
+              AND LOWER(s.status) = 'active'
+              AND s.subscriptionStartDate <= CURDATE()
+              AND s.subscriptionEndDate >= CURDATE()
+            ORDER BY s.subscriptionEndDate DESC, s.updatedAt DESC, s.id DESC
+            LIMIT 1
+          ), t.subscriptionType) AS subscriptionType
+        FROM tenants t
+        WHERE t.tenantId = ?
+        LIMIT 1
+      ) latest
+      LEFT JOIN subscriptionPlans sp
+        ON LOWER(TRIM(sp.subscriptionType)) = LOWER(TRIM(latest.subscriptionType))
+        AND sp.isActive = TRUE
+      LIMIT 1
+    `,
+    [tenantId, tenantId]
+  );
+
+  return rows[0] || null;
+}
+
 async function sendForgotMail(email, otp) {
   const emailConfig = getEmailConfig();
   const loginUrl = escapeHtml(process.env.APP_LOGIN_URL || process.env.FRONTEND_URL || 'https://assetsystems.org/login');
@@ -692,7 +731,10 @@ router.post('/login-generate-otp', async (req, res) => {
           SELECT s.subscriptionType
           FROM tenantSubscriptions s
           WHERE s.tenantId = u.tenantId
-          ORDER BY s.updatedAt DESC, s.id DESC
+            AND LOWER(s.status) = 'active'
+            AND s.subscriptionStartDate <= CURDATE()
+            AND s.subscriptionEndDate >= CURDATE()
+          ORDER BY s.subscriptionEndDate DESC, s.updatedAt DESC, s.id DESC
           LIMIT 1
         ), t.subscriptionType) AS subscriptionType
       FROM users u
@@ -875,6 +917,8 @@ router.post('/verify-login-otp', async (req, res) => {
       });
     }
 
+    const assetAccess = await getTenantAssetAccess(pool.promise(), decoded.tenantId);
+
     const authToken = jwt.sign(
       {
         userId: decoded.userId,
@@ -928,7 +972,9 @@ router.post('/verify-login-otp', async (req, res) => {
         companyDomain: decoded.companyDomain,
         companySize: decoded.companySize,
         expectedAssets: decoded.expectedAssets,
-        subscriptionType: decoded.subscriptionType,
+        subscriptionType: assetAccess?.subscriptionType || decoded.subscriptionType,
+        maxAssets: assetAccess?.maxAssets === null || assetAccess?.maxAssets === undefined ? null : Number(assetAccess.maxAssets),
+        activeAssets: Number(assetAccess?.activeAssets || 0),
         jobTitle: decoded.jobTitle,
         location: decoded.location || null
       }

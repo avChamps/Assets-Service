@@ -511,7 +511,10 @@ async function getTenantAssetLimit(db, tenantId) {
             SELECT s.subscriptionType
             FROM tenantSubscriptions s
             WHERE s.tenantId = t.tenantId
-            ORDER BY s.updatedAt DESC, s.id DESC
+              AND LOWER(s.status) = 'active'
+              AND s.subscriptionStartDate <= CURDATE()
+              AND s.subscriptionEndDate >= CURDATE()
+            ORDER BY s.subscriptionEndDate DESC, s.updatedAt DESC, s.id DESC
             LIMIT 1
           ), t.subscriptionType) AS subscriptionType
         FROM tenants t
@@ -519,7 +522,7 @@ async function getTenantAssetLimit(db, tenantId) {
         LIMIT 1
       ) latest
       LEFT JOIN subscriptionPlans sp
-        ON sp.subscriptionType = latest.subscriptionType
+        ON LOWER(TRIM(sp.subscriptionType)) = LOWER(TRIM(latest.subscriptionType))
         AND sp.isActive = TRUE
       LIMIT 1
     `,
@@ -535,11 +538,19 @@ function hasReachedAssetLimit(assetLimit, pendingAssets = 0) {
     && Number(assetLimit.activeAssets) + pendingAssets >= Number(assetLimit.maxAssets);
 }
 
+function hasConfiguredAssetLimit(assetLimit) {
+  return assetLimit && assetLimit.maxAssets !== null && assetLimit.maxAssets !== undefined;
+}
+
 function buildAssetLimitResponse(assetLimit) {
+  const maxAssets = assetLimit.maxAssets === null || assetLimit.maxAssets === undefined ? null : Number(assetLimit.maxAssets);
+  const activeAssets = Number(assetLimit.activeAssets || 0);
+
   return {
     subscriptionType: assetLimit.subscriptionType,
-    maxAssets: Number(assetLimit.maxAssets),
-    activeAssets: Number(assetLimit.activeAssets)
+    maxAssets,
+    activeAssets,
+    remainingAssets: maxAssets === null ? null : Math.max(maxAssets - activeAssets, 0)
   };
 }
 
@@ -815,13 +826,22 @@ router.post('/upload', async (req, res) => {
     const assetLimit = await getTenantAssetLimit(db, req.user.tenantId);
     let failedRows = logs.length;
 
+    if (!hasConfiguredAssetLimit(assetLimit)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Asset limit is not configured for current subscription plan',
+        data: assetLimit ? buildAssetLimitResponse(assetLimit) : null
+      });
+    }
+
     for (const { rowNumber, record } of records) {
       if (hasReachedAssetLimit(assetLimit, insertedIds.length)) {
         failedRows += 1;
         logs.push({
           row: rowNumber,
           type: 'error',
-          message: 'Asset limit reached for current subscription plan'
+          message: 'Asset limit reached for current subscription plan',
+          data: buildAssetLimitResponse(assetLimit)
         });
         continue;
       }
@@ -976,6 +996,14 @@ router.post('/create', async (req, res) => {
   try {
     const db = pool.promise();
     const assetLimit = await getTenantAssetLimit(db, req.user.tenantId);
+
+    if (!hasConfiguredAssetLimit(assetLimit)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Asset limit is not configured for current subscription plan',
+        data: assetLimit ? buildAssetLimitResponse(assetLimit) : null
+      });
+    }
 
     if (hasReachedAssetLimit(assetLimit)) {
       return res.status(403).json({

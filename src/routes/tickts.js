@@ -322,6 +322,50 @@ function buildTicketCounts(rows) {
   return counts;
 }
 
+function buildAnalysisFilters(query, tenantId) {
+  const conditions = ['t.tenantId = ?'];
+  const params = [tenantId];
+  const period = cleanText(query.period || query.filter || query.range).toLowerCase().replace(/[\s_-]+/g, '');
+  const periodDaysMap = {
+    '1day': 1,
+    '1days': 1,
+    '7day': 7,
+    '7days': 7,
+    '30day': 30,
+    '30days': 30
+  };
+  const days = periodDaysMap[period] || parsePositiveInteger(query.days || query.periodDays, null);
+  const startDate = cleanText(query.startDate || query.fromDate);
+  const endDate = cleanText(query.endDate || query.toDate);
+
+  if (period === 'all' || period === 'alltime' || period === 'alltimes') {
+    return {
+      whereSql: `WHERE ${conditions.join(' AND ')}`,
+      params
+    };
+  }
+
+  if (days) {
+    conditions.push('t.createdAt >= DATE_SUB(NOW(), INTERVAL ? DAY)');
+    params.push(days);
+  } else {
+    if (startDate) {
+      conditions.push('t.createdAt >= ?');
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      conditions.push('t.createdAt < DATE_ADD(?, INTERVAL 1 DAY)');
+      params.push(endDate);
+    }
+  }
+
+  return {
+    whereSql: `WHERE ${conditions.join(' AND ')}`,
+    params
+  };
+}
+
 function escapeCsvValue(value) {
   if (value === undefined || value === null) {
     return '';
@@ -626,6 +670,60 @@ router.get('/export/csv', async (req, res) => {
     return res.status(200).send(csv);
   } catch (error) {
     return sendDatabaseError(res, error, 'exporting');
+  }
+});
+
+// GET /api/tickets/analysis?days=1
+router.get('/analysis', async (req, res) => {
+  try {
+    const dateFilterError = getDateFilterError(req.query);
+
+    if (dateFilterError) {
+      return res.status(400).json({
+        success: false,
+        message: dateFilterError
+      });
+    }
+
+    const db = pool.promise();
+    const { whereSql, params } = buildAnalysisFilters(req.query, req.user.tenantId);
+    const statusCountsSql = `
+      SELECT t.status, COUNT(*) AS total
+      FROM tickts t
+      ${whereSql}
+      GROUP BY t.status
+    `;
+    const userTicketsSql = `
+      SELECT
+        t.createdBy AS userId,
+        COALESCE(NULLIF(TRIM(u.fullName), ''), u.workEmail, 'Unknown') AS username,
+        COUNT(*) AS ticketsRaised
+      FROM tickts t
+      LEFT JOIN users u
+        ON u.userId = t.createdBy
+       AND u.tenantId = t.tenantId
+      ${whereSql}
+      GROUP BY t.createdBy, username
+      ORDER BY ticketsRaised DESC, username ASC
+    `;
+
+    const [[statusCountRows], [userTicketRows]] = await Promise.all([
+      db.query(statusCountsSql, params),
+      db.query(userTicketsSql, params)
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Ticket analysis fetched successfully',
+      counts: buildTicketCounts(statusCountRows),
+      users: userTicketRows.map((row) => ({
+        userId: row.userId,
+        username: row.username,
+        ticketsRaised: Number(row.ticketsRaised || 0)
+      }))
+    });
+  } catch (error) {
+    return sendDatabaseError(res, error, 'fetching ticket analysis');
   }
 });
 
